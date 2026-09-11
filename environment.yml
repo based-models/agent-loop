@@ -1,0 +1,10 @@
+name: harness
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip>=24.0
+  - pip:
+      # Everything else comes from pyproject.toml. Editable, so your source
+      # changes take effect without reinstalling.
+      - -e .[all,dev]
