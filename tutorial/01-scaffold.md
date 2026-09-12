@@ -74,7 +74,7 @@ build-backend = "hatchling.build"
 [tool.ruff]
 line-length = 100
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "TCH"]
+select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
 strict = true
@@ -129,6 +129,13 @@ def build_anthropic_client(settings: Settings) -> LLMClient:
 
 A top-level import in `providers/anthropic.py` is enough to break a Modal-only install,
 because `config.py` imports that module to reach the factory. Chapter 4 covers placement.
+
+> **On the ruff rule set.** `E`/`F` are the pycodestyle and pyflakes basics, `I` sorts
+> imports, `UP` modernizes syntax for your `requires-python`, `B` catches likely bugs,
+> `SIM` simplifies. Deliberately **not** enabled: `TCH`, which moves annotation-only
+> imports into `if TYPE_CHECKING:` blocks. It is a real import-time optimization and it
+> is pure ceremony in a codebase this size — chapter 4 introduces `TYPE_CHECKING` where
+> it genuinely earns its place.
 
 ### `dev` is an extra, not a dependency group
 
