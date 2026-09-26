@@ -1,7 +1,7 @@
 [project]
-name = "harness"
+name = "agentloop"
 version = "0.1.0"
-description = "A provider-agnostic coding agent loop."
+description = "A provider-agnostic agent loop: transcript, provider seam, tool machinery, retry, tracing."
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.7",
@@ -9,15 +9,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-anthropic = ["anthropic>=1.0"]
-openai    = ["httpx>=0.27"]
-otel      = ["opentelemetry-sdk>=1.30", "opentelemetry-exporter-otlp-proto-http>=1.30"]
-cli       = ["pydantic-settings>=2.3", "python-dotenv>=1.0"]
-all       = ["harness[anthropic,openai,otel,cli]"]
-dev       = ["pytest>=8", "mypy>=1.11", "ruff>=0.6", "build>=1.2"]
+anthropic     = ["anthropic>=1.0"]
+openai-compat = ["httpx>=0.27"]
+otel          = ["opentelemetry-sdk>=1.30", "opentelemetry-exporter-otlp-proto-http>=1.30"]
+all           = ["agentloop[anthropic,openai-compat,otel]"]
+# The test suite needs the OTel SDK (test_tracing.py exercises a real exporter);
+# the LIBRARY does not. Without this, `pip install -e ".[dev]"` gives you a suite
+# that fails at collection, and only `[all,dev]` happens to work.
+dev           = ["pytest>=8", "mypy>=1.11", "ruff>=0.6", "build>=1.2", "agentloop[otel]"]
 
-[project.scripts]
-harness = "harness.cli:main"
+# No [project.scripts]. agentloop is a library; it has no command. The `harness`
+# console script belongs to the second repository (chapter 13).
+#
+# No pydantic-settings, deliberately: its whole job is reaching os.environ, which
+# is the thing the layering test bans `os` for. Settings.from_env() takes the
+# mapping instead. See chapter 1, and the wheel test's find_spec assertion.
 
 [build-system]
 requires = ["hatchling"]
@@ -25,12 +31,18 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100
+src = ["src"]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
 strict = true
-files = ["src", "tests"]
+# `examples` is checked as strictly as the library: it is the one piece of
+# consumer code in this repo, and chapter 11 turns that into a test.
+# Restore when chapter 9 adds datetime_agent.py -- mypy errors with
+# "Cannot read file" while examples/ holds no .py files.
+files = ["src", "tests"]  # + "examples"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

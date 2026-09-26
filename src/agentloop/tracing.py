@@ -1,0 +1,269 @@
+"""OpenTelemetry spans, as a LoopObserver.
+
+`loop.py` never imports OpenTelemetry: tracing attaches from outside, which is
+the payoff of the callback protocol in chapter 7.
+
+Attribute names follow the GenAI semantic conventions
+(open-telemetry/semantic-conventions-genai, docs/gen-ai/gen-ai-spans.md).
+Status: Development — these names will change; pin what you targeted.
+
+This module never touches global state on its own: nothing here runs at import,
+and it never reads OTEL_* variables. `configure_tracing` DOES install a global
+provider -- but only when you call it, with an endpoint you chose. See Part 3.2.
+"""
+
+from __future__ import annotations
+
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
+
+from opentelemetry import trace
+from opentelemetry.context import Context
+from opentelemetry.trace import Span, Status, StatusCode
+
+from agentloop.errors import ProviderError
+from agentloop.provider import ModelRequest, ModelResponse
+from agentloop.transcript import ToolCallPart, ToolResultPart
+
+if TYPE_CHECKING:  # pragma: no cover - the SDK is the [otel] extra
+    from opentelemetry.sdk.trace import TracerProvider
+
+_tracer = trace.get_tracer("agentloop")
+
+DEFAULT_AGENT_NAME = "agentloop"
+ERROR_DETAIL_CHARS = 200
+
+
+class OTelObserver:
+    """Emits one root span per conversation, a child per model request, and a
+    sibling per tool call. Retries become events on the model span.
+
+    ONE CONVERSATION AT A TIME. The observer holds the in-flight model span, and
+    retries arrive with nothing to say which request they belong to, so two runs
+    sharing it would corrupt each other's spans. A second concurrent
+    `conversation()` raises instead. Concurrent runs need one observer -- one
+    traced Agent -- each.
+
+    With `capture_content` off, nothing the model, a tool or a provider wrote
+    reaches a span: that includes error messages, which quote arguments and code.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: str,
+        model: str,
+        agent_name: str = DEFAULT_AGENT_NAME,
+        capture_content: bool = False,
+    ) -> None:
+        self._provider = provider
+        self._model = model
+        # The APPLICATION's name, because it is what a trace reader is looking for.
+        self._agent_name = agent_name
+        # Off by default: a coding agent's prompts contain the user's source code.
+        self._capture = capture_content
+        self._model_span: Span | None = None
+        self._tool_spans: dict[str, Span] = {}
+        # The root span's context, passed EXPLICITLY to every child: tools run on
+        # worker threads, where the ambient context is empty.
+        self._context: Context | None = None
+        self._running = threading.Lock()
+
+    @contextmanager
+    def conversation(self) -> Iterator[None]:
+        if not self._running.acquire(blocking=False):
+            raise RuntimeError(
+                "this OTelObserver is already tracing a conversation; concurrent "
+                "runs need one observer (one traced Agent) each"
+            )
+        try:
+            with _tracer.start_as_current_span(
+                f"invoke_agent {self._agent_name}",
+                attributes={
+                    "gen_ai.operation.name": "invoke_agent",
+                    "gen_ai.provider.name": self._provider,
+                    "gen_ai.agent.name": self._agent_name,
+                },
+                # Both default to writing the exception MESSAGE onto the span,
+                # which may quote content; the except below does it by policy.
+                record_exception=self._capture,
+                set_status_on_exception=False,
+            ) as root:
+                self._context = trace.set_span_in_context(root)
+                try:
+                    yield
+                except BaseException as exc:
+                    root.set_attribute("error.type", type(exc).__name__)
+                    detail = str(exc)[:ERROR_DETAIL_CHARS] if self._capture else None
+                    root.set_status(Status(StatusCode.ERROR, detail))
+                    self._end_unfinished(exc)
+                    raise
+        finally:
+            self._model_span = None
+            self._tool_spans = {}
+            self._context = None
+            self._running.release()
+
+    def _end_unfinished(self, exc: BaseException) -> None:
+        """End whatever the exception interrupted -- usually a provider call that
+        raised, so `on_response` never came -- as an error."""
+        spans = list(self._tool_spans.values())
+        if self._model_span is not None:
+            spans.append(self._model_span)
+        for span in spans:
+            span.set_attribute("error.type", type(exc).__name__)
+            if self._capture:
+                span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR))
+            span.end()
+
+    # --- the model request ---
+
+    def on_request(self, request: ModelRequest) -> None:
+        span = _tracer.start_span(
+            f"chat {self._model}",
+            context=self._context,
+            attributes={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.provider.name": self._provider,  # NOT gen_ai.system
+                "gen_ai.request.model": self._model,
+                "gen_ai.request.max_tokens": request.max_tokens,
+                "agentloop.request.message_count": len(request.messages),
+                "agentloop.request.tool_count": len(request.tools),
+            },
+        )
+        if request.temperature is not None:
+            span.set_attribute("gen_ai.request.temperature", request.temperature)
+        if self._capture and request.system:
+            span.set_attribute("gen_ai.system_instructions", request.system)
+        self._model_span = span
+
+    def on_response(self, response: ModelResponse) -> None:
+        span = self._model_span
+        if span is None:
+            return
+        usage = response.usage
+        span.set_attribute("gen_ai.response.model", response.model)
+        span.set_attribute(
+            "gen_ai.response.finish_reasons", [str(response.stop_reason)]
+        )
+        span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", usage.output_tokens)
+
+        # None means "not reported": omit rather than assert a zero that was
+        # never measured. See chapter 3.
+        if usage.cache_read_tokens is not None:
+            span.set_attribute(
+                "gen_ai.usage.cache_read.input_tokens", usage.cache_read_tokens
+            )
+        if usage.cache_write_tokens is not None:
+            span.set_attribute(
+                "gen_ai.usage.cache_write.input_tokens", usage.cache_write_tokens
+            )
+        if usage.reasoning_tokens is not None:
+            span.set_attribute(
+                "gen_ai.usage.reasoning.output_tokens", usage.reasoning_tokens
+            )
+        # There is no gen_ai.* attribute for cost, so it gets our own prefix.
+        if usage.cost_usd is not None:
+            span.set_attribute("agentloop.usage.cost_usd", usage.cost_usd)
+        if response.raw_stop_reason:
+            span.set_attribute(
+                "agentloop.response.raw_stop_reason", response.raw_stop_reason
+            )
+        span.end()
+        self._model_span = None
+
+    def on_retry(self, attempt: int, error: Exception) -> None:
+        """An event on the model span, not a span: it happened DURING the request."""
+        if self._model_span is None:
+            return
+        attributes: dict[str, Any] = {
+            "agentloop.retry.attempt": attempt,
+            "agentloop.retry.error_type": type(error).__name__,
+        }
+        if isinstance(error, ProviderError) and error.status_code is not None:
+            attributes["http.response.status_code"] = error.status_code
+        if self._capture:
+            # A provider's 400 can quote the request back, so this is content.
+            attributes["agentloop.retry.message"] = str(error)[:ERROR_DETAIL_CHARS]
+        self._model_span.add_event("retry", attributes)
+
+    # --- tools ---
+
+    def on_tool_start(self, call: ToolCallPart) -> None:
+        attributes: dict[str, Any] = {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": call.tool_name,
+            "gen_ai.tool.call.id": call.id,
+            "gen_ai.tool.type": "function",
+        }
+        if self._capture:
+            # Imported here, not at module scope: this is the only use, it is
+            # unreachable with capture off, and chapter 12's allowlist is shorter
+            # for it. See Part 5.
+            import json
+
+            attributes["gen_ai.tool.call.arguments"] = json.dumps(call.arguments)
+        # Keyed by call id: chapter 6 runs tools in parallel.
+        self._tool_spans[call.id] = _tracer.start_span(
+            f"execute_tool {call.tool_name}", context=self._context, attributes=attributes
+        )
+
+    def on_tool_end(self, call: ToolCallPart, result: ToolResultPart) -> None:
+        span = self._tool_spans.pop(call.id, None)
+        if span is None:
+            return
+        span.set_attribute("agentloop.tool.is_error", result.is_error)
+        span.set_attribute("agentloop.tool.result_bytes", len(result.content))
+        if self._capture:
+            span.set_attribute("gen_ai.tool.call.result", result.content)
+        if result.is_error:
+            # The error text quotes arguments and file contents: content, not metadata.
+            detail = result.content[:ERROR_DETAIL_CHARS] if self._capture else None
+            span.set_status(Status(StatusCode.ERROR, detail))
+        span.end()
+
+    def on_text_delta(self, text: str) -> None:
+        """Reserved for streaming (chapter 17)."""
+
+
+# --- setup: opt-in, and the only function here that touches global state -----
+
+
+def configure_tracing(endpoint: str, *, service_name: str = "agentloop") -> TracerProvider:
+    """Install a process-global tracer provider exporting to `endpoint`.
+
+    Returns the provider so the caller owns its lifecycle: `force_flush()` before a
+    short-lived process exits, `shutdown()` when done. Spans are batched, so
+    without one of those the last few may never leave.
+
+    Opt-in and explicit. YOU call this, with an endpoint YOU chose -- the library
+    never calls it, never runs it at import, and never goes looking for
+    OTEL_EXPORTER_OTLP_ENDPOINT itself. Same shape as Settings.from_env(env).
+
+    The SDK imports are inside the function because the SDK lives in the [otel]
+    extra. That is what keeps module scope API-only, so `import agentloop.tracing`
+    works on a bare install and simply produces no spans.
+    """
+    try:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    except ImportError as exc:
+        raise ImportError(
+            "Tracing needs the OpenTelemetry SDK, which is an optional extra. "
+            "Install: pip install 'agentloop[otel]'"
+        ) from exc
+
+    provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
+    provider.add_span_processor(
+        BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint.rstrip('/')}/v1/traces"))
+    )
+    trace.set_tracer_provider(provider)
+    return provider

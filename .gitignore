@@ -8,3 +8,5 @@ dist/
 # If you generate a lock file (see the note above), ignore it too:
 environment.lock.yml
 scratch/
+tutorial/
+manual/
