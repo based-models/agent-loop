@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import httpx
-
-from agentloop.providers._openai_compat import OpenAICompatClient, Quirks
+from agentloop.providers._openai_compat import OpenAICompatClient, Quirks, httpx_timeout
 
 DEFAULT_MODEL = "Qwen/Qwen3.6-35B-A3B-FP8"
 # Cold starts spin up a container and load weights: minutes, not seconds.
-TIMEOUT = httpx.Timeout(connect=60.0, read=900.0, write=30.0, pool=10.0)
+TIMEOUT_SECONDS = {"connect": 60.0, "read": 900.0, "write": 30.0, "pool": 10.0}
 
 QUIRKS = Quirks(
     reports_usage_details=False,        # vLLM omits prompt_tokens_details
@@ -34,5 +32,5 @@ def build_modal_client(
         base_url=f"{endpoint_url.rstrip('/')}/v1",
         headers=headers,
         quirks=QUIRKS,
-        timeout=TIMEOUT,
+        timeout=httpx_timeout(**TIMEOUT_SECONDS),
     )

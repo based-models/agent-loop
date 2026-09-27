@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -147,6 +149,38 @@ def test_iteration_cap() -> None:
     ]
     with pytest.raises(LoopBudgetExceeded, match="iterations"):
         run(ScriptedClient(*forever), max_iterations=5)
+
+
+class ConversationOutcomeObserver(ListObserver):
+    """Records whether `conversation()` saw a real exception, like a real
+    observer (tracing, logging, a DB transaction) would."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.outcome: str | None = None
+
+    @contextmanager
+    def conversation(self) -> Iterator[None]:
+        try:
+            yield
+        except BaseException:
+            self.outcome = "error"
+            raise
+        else:
+            self.outcome = "ok"
+
+
+def test_the_iteration_cap_is_an_observed_failure_like_the_wall_clock_budget() -> None:
+    # Both budgets raise LoopBudgetExceeded; an observer must see BOTH the same
+    # way. The wall-clock raise happens inside watcher.conversation() -- the
+    # iteration-cap raise used to happen after it had already exited cleanly.
+    forever = [
+        resp(echo_call(f"c{i}", "again"), stop=StopReason.TOOL_USE) for i in range(10)
+    ]
+    observer = ConversationOutcomeObserver()
+    with pytest.raises(LoopBudgetExceeded, match="iterations"):
+        run(ScriptedClient(*forever), max_iterations=5, observer=observer)
+    assert observer.outcome == "error"
 
 
 def test_wall_clock_budget() -> None:

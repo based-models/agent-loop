@@ -310,6 +310,13 @@ class AnthropicClient:
             message = self._client.messages.create(**payload)
         except self._sdk.APIError as exc:
             raise classify_sdk_error(exc) from exc
+        except TypeError as exc:
+            # The SDK defers credential resolution to per-request header
+            # validation, which raises a bare TypeError -- not an APIError --
+            # when no api_key, auth_token, or CLI profile was ever configured.
+            if "Could not resolve authentication method" not in str(exc):
+                raise
+            raise AuthError(str(exc), provider=self.name) from exc
         return response_from_wire(message)
 
     def close(self) -> None:

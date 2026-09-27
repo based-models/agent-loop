@@ -1,7 +1,7 @@
-"""The OpenAI-compatible adapter, shared by OpenRouter and Modal.
+"""The OpenAI-compatible adapter, shared by OpenRouter, Modal, and OpenAI.
 
-Both speak the same wire protocol; they differ in base URL, auth headers, and
-the handful of behaviours captured in `Quirks`. Translation is module-level
+All three speak the same wire protocol; they differ in base URL, auth headers,
+and the handful of behaviours captured in `Quirks`. Translation is module-level
 functions so it can be tested with a dict and no network.
 """
 
@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
+
+if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
+    import httpx
 
 from agentloop.errors import (
     AuthError,
@@ -63,6 +65,23 @@ MAX_STOP_SEQUENCES = 4          # OpenAI caps `stop` at four entries
 ERROR_DETAIL_CHARS = 500
 
 
+def _httpx() -> Any:
+    """Import httpx, with an error that names the missing extra."""
+    try:
+        import httpx
+    except ImportError as exc:
+        raise ImportError(
+            "The OpenAI-compatible adapter requires httpx.\n"
+            "  pip install 'agentloop[openai-compat]'"
+        ) from exc
+    return httpx
+
+
+def httpx_timeout(**kwargs: float) -> httpx.Timeout:
+    """Build an `httpx.Timeout` without requiring httpx at import time."""
+    return _httpx().Timeout(**kwargs)  # type: ignore[no-any-return]
+
+
 class Quirks(BaseModel):
     """Behavioural differences between OpenAI-compatible servers.
 
@@ -77,6 +96,9 @@ class Quirks(BaseModel):
     errors_are_json: bool = True
     supports_parallel_tool_calls_param: bool = True
     default_parallel_tool_calls: bool = True
+    # OpenAI's own API wants `max_completion_tokens` (required for its reasoning
+    # models, recommended for the rest); OpenRouter/Modal still expect `max_tokens`.
+    max_tokens_field: str = "max_tokens"
 
 
 # --- canonical -> wire -------------------------------------------------------
@@ -153,7 +175,7 @@ def request_to_wire(
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "max_tokens": request.max_tokens,
+        quirks.max_tokens_field: request.max_tokens,
     }
     if request.tools:
         payload["tools"] = [tool_to_wire(tool, quirks) for tool in request.tools]
@@ -323,47 +345,60 @@ def _looks_like_context_overflow(detail: str) -> bool:
     return any(marker in lowered for marker in _CONTEXT_MARKERS)
 
 
+def _error_for_code(code: int, detail: str, **kwargs: Any) -> ProviderError:
+    """Map a status-style code to the right exception subclass.
+
+    Shared by a real HTTP failure (`classify_http_error`) and a 200 whose body
+    reports one instead (`classify_error_body`) -- a transient failure reported
+    either way should be classified, and retried, the same way.
+    """
+    if code in (401, 403):
+        return AuthError(detail, **kwargs)
+    if code == 402:
+        return InsufficientCredits(detail, **kwargs)
+    if code == 404:
+        return ModelNotFound(detail, **kwargs)
+    if code == 408:
+        return ProviderTimeout(detail, **kwargs)
+    if code == 409:
+        return ProviderUnavailable(detail, **kwargs)  # a transient conflict, retry
+    if code == 429:
+        return RateLimited(detail, **kwargs)
+    if code == 400:
+        if _looks_like_context_overflow(detail):
+            return ContextLengthExceeded(detail, **kwargs)
+        return BadRequestError(detail, **kwargs)
+    if code >= 500:
+        return ProviderUnavailable(detail, **kwargs)
+    return ProviderError(detail, **kwargs)
+
+
 def classify_http_error(
     response: httpx.Response, *, provider: str, quirks: Quirks
 ) -> ProviderError:
     """Turn a failed HTTP response into the right exception subclass."""
     status = response.status_code
-    detail = _extract_message(response, quirks)
-    kwargs: dict[str, Any] = {
-        "provider": provider,
-        "status_code": status,
-        "retry_after": parse_retry_after(response.headers.get("retry-after")),
-    }
-
-    if status in (401, 403):
-        return AuthError(detail, **kwargs)
-    if status == 402:
-        return InsufficientCredits(detail, **kwargs)
-    if status == 404:
-        return ModelNotFound(detail, **kwargs)
-    if status == 408:
-        return ProviderTimeout(detail, **kwargs)
-    if status == 429:
-        return RateLimited(detail, **kwargs)
-    if status == 400:
-        if _looks_like_context_overflow(detail):
-            return ContextLengthExceeded(detail, **kwargs)
-        return BadRequestError(detail, **kwargs)
-    if status >= 500:
-        return ProviderUnavailable(detail, **kwargs)
-    return ProviderError(detail, **kwargs)
+    return _error_for_code(
+        status,
+        _extract_message(response, quirks),
+        provider=provider,
+        status_code=status,
+        retry_after=parse_retry_after(response.headers.get("retry-after")),
+    )
 
 
 def classify_error_body(error: Any, *, provider: str) -> ProviderError:
-    """OpenRouter can report failure inside an HTTP 200 body."""
+    """OpenRouter can report failure inside an HTTP 200 body -- any code the
+    body names, not just 429, since the same range of failures can arrive
+    either way."""
     if isinstance(error, Mapping):
         message = str(error.get("message") or error)
         code = error.get("code")
     else:
         message, code = str(error), None
-    if code == 429:
-        return RateLimited(message, provider=provider, status_code=200)
-    return ProviderError(message, provider=provider, status_code=200)
+    if not isinstance(code, int):
+        return ProviderError(message, provider=provider, status_code=200)
+    return _error_for_code(code, message, provider=provider, status_code=200)
 
 
 # --- the client --------------------------------------------------------------
@@ -385,7 +420,8 @@ class OpenAICompatClient:
         self.name = name
         self.model = model
         self._quirks = quirks
-        self._http = httpx.Client(
+        self._httpx = _httpx()
+        self._http = self._httpx.Client(
             base_url=base_url.rstrip("/"), headers=dict(headers), timeout=timeout
         )
 
@@ -393,9 +429,9 @@ class OpenAICompatClient:
         payload = request_to_wire(request, model=self.model, quirks=self._quirks)
         try:
             response = self._http.post("/chat/completions", json=payload)
-        except httpx.TimeoutException as exc:
+        except self._httpx.TimeoutException as exc:
             raise ProviderTimeout(str(exc), provider=self.name) from exc
-        except httpx.HTTPError as exc:
+        except self._httpx.HTTPError as exc:
             raise ProviderUnavailable(str(exc), provider=self.name) from exc
 
         if response.status_code >= 400:

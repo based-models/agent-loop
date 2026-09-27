@@ -105,8 +105,11 @@ def run_conversation(
 
             results = run_tools(response.content, registry, deps, watcher)
             transcript.add_tool_results(results)  # asserts the call/result pairing
-
-    raise LoopBudgetExceeded(f"exceeded {max_iterations} iterations")
+        else:
+            # Reached only if the loop exhausts max_iterations without ever
+            # `return`ing -- still inside `with watcher.conversation()`, so an
+            # observer sees this failure the same way it sees the wall-clock one.
+            raise LoopBudgetExceeded(f"exceeded {max_iterations} iterations")
 
 
 class ListObserver(NullObserver):

@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import httpx
-
-from agentloop.providers._openai_compat import OpenAICompatClient, Quirks
+from agentloop.providers._openai_compat import OpenAICompatClient, Quirks, httpx_timeout
 
 BASE_URL = "https://openrouter.ai/api/v1"
 # The `openrouter/free` router spreads across free models and auto-filters for
 # tool-calling support, so one congested upstream cannot hard-block you.
 DEFAULT_MODEL = "openrouter/free"
-TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+TIMEOUT_SECONDS = {"connect": 10.0, "read": 300.0, "write": 30.0, "pool": 10.0}
 
 
 def build_openrouter_client(
@@ -31,5 +29,5 @@ def build_openrouter_client(
         base_url=BASE_URL,
         headers=headers,
         quirks=Quirks(),
-        timeout=TIMEOUT,
+        timeout=httpx_timeout(**TIMEOUT_SECONDS),
     )

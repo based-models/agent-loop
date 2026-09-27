@@ -277,6 +277,40 @@ def test_the_client_raises_the_contract_not_the_sdk(
     assert isinstance(caught.value.__cause__, anthropic.APIStatusError)
 
 
+def test_unresolvable_credentials_raise_auth_error_not_type_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The SDK defers credential resolution to per-request header validation,
+    # which raises a bare TypeError -- not an APIError -- when nothing was ever
+    # configured (no api_key, no env var, no CLI profile).
+    client = AnthropicClient(api_key="sk-ant-test")
+
+    def unresolved(**payload: object) -> None:
+        raise TypeError(
+            '"Could not resolve authentication method. Expected one of api_key, '
+            'auth_token, or credentials to be set. Or for one of the `X-Api-Key` '
+            'or `Authorization` headers to be explicitly omitted"'
+        )
+
+    monkeypatch.setattr(client._client.messages, "create", unresolved)
+    with pytest.raises(AuthError) as caught:
+        client.complete(ModelRequest(messages=()))
+    assert isinstance(caught.value.__cause__, TypeError)
+
+
+def test_an_unrelated_type_error_is_not_mistaken_for_a_credential_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = AnthropicClient(api_key="sk-ant-test")
+
+    def broken(**payload: object) -> None:
+        raise TypeError("unexpected keyword argument 'foo'")
+
+    monkeypatch.setattr(client._client.messages, "create", broken)
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        client.complete(ModelRequest(messages=()))
+
+
 def test_the_sdk_does_not_retry_on_its_own() -> None:
     # RetryingClient owns retries; two layers would multiply attempts.
     assert AnthropicClient(api_key="sk-ant-test")._client.max_retries == 0

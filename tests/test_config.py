@@ -1,8 +1,10 @@
+from collections.abc import Callable
+
 import pytest
 from pydantic import ValidationError
 
 from agentloop.config import Settings, build_client
-from agentloop.errors import AuthError
+from agentloop.errors import AgentLoopError, AuthError, ConfigurationError
 
 
 def settings(**overrides: object) -> Settings:
@@ -93,6 +95,7 @@ def test_openrouter_without_a_key_fails_at_startup() -> None:
 
 
 def test_modal_without_an_endpoint_fails_at_startup() -> None:
+    # ConfigurationError IS a ValueError (below), so this still passes unchanged.
     with pytest.raises(ValueError, match="MODAL_ENDPOINT_URL"):
         build_client(settings(provider="modal"))
 
@@ -108,6 +111,31 @@ def test_modal_proxy_tokens_are_both_or_neither() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: build_client(settings(provider="modal")),
+        lambda: build_client(
+            settings(
+                provider="modal",
+                modal_endpoint_url="https://x.modal.run",
+                modal_proxy_token_id="wk-1",
+            )
+        ),
+    ],
+)
+def test_a_bad_modal_setup_is_still_catchable_as_agentloop_error(
+    build: Callable[[], object],
+) -> None:
+    # Every other provider's missing-config raises AuthError, an AgentLoopError.
+    # Modal's raised bare ValueError instead -- `except AgentLoopError:
+    # show_setup_instructions()` silently missed it. ConfigurationError closes
+    # that gap without breaking the ValueError-shaped assertions above.
+    with pytest.raises(ConfigurationError) as caught:
+        build()
+    assert isinstance(caught.value, AgentLoopError)
+
+
 def test_an_unauthenticated_modal_endpoint_is_allowed() -> None:
     client = build_client(
         settings(provider="modal", modal_endpoint_url="https://x.modal.run")
@@ -118,6 +146,15 @@ def test_an_unauthenticated_modal_endpoint_is_allowed() -> None:
 def test_openai_without_a_key_fails_at_startup() -> None:
     with pytest.raises(AuthError, match="OPENAI_API_KEY"):
         build_client(settings(provider="openai"))
+
+
+def test_build_clients_unreachable_fallback_is_still_an_agentloop_error() -> None:
+    # `Provider` is a Literal, so this can't happen through normal validation --
+    # model_construct bypasses it, the same way a bug elsewhere in the codebase
+    # could hand build_client a Settings it never validated.
+    bogus = Settings.model_construct(provider="gemini")
+    with pytest.raises(ConfigurationError):
+        build_client(bogus)
 
 
 def test_anthropic_is_wrapped_in_retries_too() -> None:

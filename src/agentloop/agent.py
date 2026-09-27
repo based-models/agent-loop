@@ -85,9 +85,15 @@ def tool(
 
     def decorate(fn: Callable[..., Any]) -> ToolSpec:
         doc = inspect.getdoc(fn) or ""
+        resolved_description = description or doc.split("\n\n")[0]
+        if not resolved_description:
+            raise ValueError(
+                f"@tool on {fn.__name__!r} has no description: give it a "
+                f"docstring or pass description=... explicitly"
+            )
         return ToolSpec(
             name=name or fn.__name__,
-            description=description or doc.split("\n\n")[0],
+            description=resolved_description,
             parameters=parameters,
             handler=_make_handler(fn),
         )
@@ -130,10 +136,26 @@ class Agent:
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         deadline_seconds: float | None = DEFAULT_DEADLINE_SECONDS,
     ) -> None:
+        """A client, a registry and a deps bundle, wired together.
+
+        `client` is not owned by this `Agent` and is never closed by it -- see
+        `close()` and `from_env()`, which do own the client they build.
+
+        `trace=True` builds an `OTelObserver` (from `client.name`/`client.model`
+        and `name`) and merges it with `observer`. Spans go nowhere until you
+        separately call `agentloop.tracing.configure_tracing(endpoint)`; see its
+        docstring. An `OTelObserver` also holds a non-reentrant lock: one
+        `Agent(..., trace=True)` instance can run only one conversation at a
+        time. Calling `run()`/`converse()` again while one is already in flight
+        (e.g. from a second concurrent request sharing this instance) raises
+        `RuntimeError` rather than corrupting the in-flight spans -- build one
+        traced `Agent` per concurrent conversation instead.
+        """
         self._registry = Registry(tools)
         self._client = client
         self._system = system
         self._deps: ToolDeps = deps or Deps()
+        self.name = name
         self._observer = (
             _with_tracing(observer, provider=client.name, model=client.model, name=name)
             if trace

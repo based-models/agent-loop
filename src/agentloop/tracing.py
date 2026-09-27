@@ -14,6 +14,7 @@ provider -- but only when you call it, with an endpoint you chose. See Part 3.2.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -29,6 +30,8 @@ from agentloop.transcript import ToolCallPart, ToolResultPart
 
 if TYPE_CHECKING:  # pragma: no cover - the SDK is the [otel] extra
     from opentelemetry.sdk.trace import TracerProvider
+
+logger = logging.getLogger(__name__)
 
 _tracer = trace.get_tracer("agentloop")
 
@@ -66,6 +69,10 @@ class OTelObserver:
         self._capture = capture_content
         self._model_span: Span | None = None
         self._tool_spans: dict[str, Span] = {}
+        # Tools run in a thread pool (chapter 6): on_tool_start/on_tool_end/
+        # _end_unfinished all touch _tool_spans concurrently, so it needs its own
+        # lock -- a separate concern from `_running`, which guards conversations.
+        self._tool_spans_lock = threading.Lock()
         # The root span's context, passed EXPLICITLY to every child: tools run on
         # worker threads, where the ambient context is empty.
         self._context: Context | None = None
@@ -95,10 +102,21 @@ class OTelObserver:
                 try:
                     yield
                 except BaseException as exc:
-                    root.set_attribute("error.type", type(exc).__name__)
-                    detail = str(exc)[:ERROR_DETAIL_CHARS] if self._capture else None
-                    root.set_status(Status(StatusCode.ERROR, detail))
-                    self._end_unfinished(exc)
+                    # This cleanup must never replace `exc`: it is the loop's real
+                    # failure (a provider error, a budget exceeded, a tool crash),
+                    # not the "already tracing" misuse error above -- a telemetry
+                    # bug here should be logged, not swap out what the caller sees.
+                    try:
+                        root.set_attribute("error.type", type(exc).__name__)
+                        detail = (
+                            str(exc)[:ERROR_DETAIL_CHARS] if self._capture else None
+                        )
+                        root.set_status(Status(StatusCode.ERROR, detail))
+                        self._end_unfinished(exc)
+                    except Exception:
+                        logger.exception(
+                            "tracing cleanup failed while handling %r", exc
+                        )
                     raise
         finally:
             self._model_span = None
@@ -109,15 +127,18 @@ class OTelObserver:
     def _end_unfinished(self, exc: BaseException) -> None:
         """End whatever the exception interrupted -- usually a provider call that
         raised, so `on_response` never came -- as an error."""
-        spans = list(self._tool_spans.values())
+        with self._tool_spans_lock:
+            spans = list(self._tool_spans.values())
         if self._model_span is not None:
             spans.append(self._model_span)
         for span in spans:
-            span.set_attribute("error.type", type(exc).__name__)
-            if self._capture:
-                span.record_exception(exc)
-            span.set_status(Status(StatusCode.ERROR))
-            span.end()
+            try:
+                span.set_attribute("error.type", type(exc).__name__)
+                if self._capture:
+                    span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR))
+            finally:
+                span.end()
 
     # --- the model request ---
 
@@ -207,24 +228,31 @@ class OTelObserver:
             import json
 
             attributes["gen_ai.tool.call.arguments"] = json.dumps(call.arguments)
-        # Keyed by call id: chapter 6 runs tools in parallel.
-        self._tool_spans[call.id] = _tracer.start_span(
+        span = _tracer.start_span(
             f"execute_tool {call.tool_name}", context=self._context, attributes=attributes
         )
+        # Keyed by call id: chapter 6 runs tools in parallel.
+        with self._tool_spans_lock:
+            self._tool_spans[call.id] = span
 
     def on_tool_end(self, call: ToolCallPart, result: ToolResultPart) -> None:
-        span = self._tool_spans.pop(call.id, None)
+        with self._tool_spans_lock:
+            span = self._tool_spans.pop(call.id, None)
         if span is None:
             return
-        span.set_attribute("agentloop.tool.is_error", result.is_error)
-        span.set_attribute("agentloop.tool.result_bytes", len(result.content))
-        if self._capture:
-            span.set_attribute("gen_ai.tool.call.result", result.content)
-        if result.is_error:
-            # The error text quotes arguments and file contents: content, not metadata.
-            detail = result.content[:ERROR_DETAIL_CHARS] if self._capture else None
-            span.set_status(Status(StatusCode.ERROR, detail))
-        span.end()
+        try:
+            span.set_attribute("agentloop.tool.is_error", result.is_error)
+            span.set_attribute(
+                "agentloop.tool.result_bytes", len(result.content.encode("utf-8"))
+            )
+            if self._capture:
+                span.set_attribute("gen_ai.tool.call.result", result.content)
+            if result.is_error:
+                # The error text quotes arguments and file contents: content, not metadata.
+                detail = result.content[:ERROR_DETAIL_CHARS] if self._capture else None
+                span.set_status(Status(StatusCode.ERROR, detail))
+        finally:
+            span.end()
 
     def on_text_delta(self, text: str) -> None:
         """Reserved for streaming (chapter 17)."""

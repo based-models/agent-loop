@@ -94,6 +94,17 @@ def test_honours_retry_after_over_its_own_backoff() -> None:
     assert 0.04 < time.monotonic() - started < 1.0
 
 
+def test_retry_after_is_still_capped_at_max_delay() -> None:
+    # A server's Retry-After is a request, not an override of the caller's own
+    # ceiling -- a hostile or misconfigured "wait an hour" must not block past
+    # what the policy allows.
+    inner = FlakyClient(RateLimited("429", retry_after=3600.0))
+    capped = RetryPolicy(max_delay=0.05)
+    started = time.monotonic()
+    RetryingClient(inner, policy=capped).complete(REQUEST)
+    assert time.monotonic() - started < 1.0
+
+
 def test_context_length_is_never_retried() -> None:
     inner = FlakyClient(ContextLengthExceeded("does not fit"))
     with pytest.raises(ContextLengthExceeded):

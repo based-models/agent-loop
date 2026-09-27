@@ -1,3 +1,4 @@
+import sys
 from typing import Any
 
 import httpx
@@ -7,12 +8,15 @@ from agentloop.errors import (
     AuthError,
     ContextLengthExceeded,
     InsufficientCredits,
+    ProviderUnavailable,
     ResponseInvalid,
 )
 from agentloop.provider import ModelRequest, StopReason, ToolSchema
 from agentloop.providers._openai_compat import (
     OpenAICompatClient,
     Quirks,
+    _httpx,
+    classify_error_body,
     classify_http_error,
     message_to_wire,
     parse_arguments,
@@ -119,6 +123,25 @@ def test_temperature_is_forwarded_here() -> None:
     assert wire(temperature=0.2)["temperature"] == 0.2
 
 
+def test_max_tokens_field_is_quirk_driven() -> None:
+    # OpenRouter/Modal: "max_tokens". OpenAI: "max_completion_tokens" (required
+    # for its reasoning models, recommended generally) -- see providers/openai.py.
+    payload = request_to_wire(
+        ModelRequest(messages=(), max_tokens=100),
+        model="m",
+        quirks=Quirks(max_tokens_field="max_completion_tokens"),
+    )
+    assert payload["max_completion_tokens"] == 100
+    assert "max_tokens" not in payload
+
+
+def test_openai_provider_requests_max_completion_tokens() -> None:
+    from agentloop.providers.openai import build_openai_client
+
+    client = build_openai_client(api_key="sk-test")
+    assert client._quirks.max_tokens_field == "max_completion_tokens"
+
+
 # --- parsing arguments (Part 4) ---
 
 
@@ -214,7 +237,33 @@ def test_an_error_inside_a_200_is_raised() -> None:
         )
 
 
+def test_a_200_body_error_is_classified_by_code_not_just_429() -> None:
+    # OpenRouter can report ANY failure inside a 200 body, not only rate limits --
+    # a body-reported 402/5xx-equivalent must classify (and retry) the same way
+    # the real HTTP status would.
+    credits = classify_error_body({"message": "top up", "code": 402}, provider="openrouter")
+    assert isinstance(credits, InsufficientCredits)
+
+    unavailable = classify_error_body(
+        {"message": "upstream down", "code": 503}, provider="openrouter"
+    )
+    assert isinstance(unavailable, ProviderUnavailable)
+    assert unavailable.retryable is True
+
+
+def test_a_200_body_error_with_no_code_falls_back_to_generic() -> None:
+    error = classify_error_body({"message": "something broke"}, provider="openrouter")
+    assert type(error).__name__ == "ProviderError"
+
+
 # --- error classification (Part 4.5) ---
+
+
+def test_409_is_retried_like_anthropics_own_retry_list() -> None:
+    response = http(409, json={"error": {"message": "conflict"}})
+    error = classify_http_error(response, provider="openrouter", quirks=DEFAULT)
+    assert isinstance(error, ProviderUnavailable)
+    assert error.retryable is True
 
 
 def test_modal_plain_text_401_does_not_crash_the_parser() -> None:
@@ -330,6 +379,14 @@ def test_close_is_idempotent() -> None:
     with client_answering(httpx.Response(200, json={})) as client:
         pass
     client.close()
+
+
+def test_missing_httpx_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A `None` entry makes `import httpx` raise ImportError, simulating a bare
+    # `pip install agentloop` with no provider extra installed.
+    monkeypatch.setitem(sys.modules, "httpx", None)
+    with pytest.raises(ImportError, match=r"agentloop\[openai-compat\]"):
+        _httpx()
 
 
 # --- generated ids stay unique ---

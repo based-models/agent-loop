@@ -64,6 +64,22 @@ def test_the_schema_is_the_one_you_wrote() -> None:
     assert echo_tz.parameters is SCHEMA
 
 
+def test_a_tool_with_no_docstring_and_no_description_fails_clearly() -> None:
+    with pytest.raises(ValueError, match="no_doc"):
+
+        @tool(SCHEMA)
+        def no_doc(timezone: str) -> str:
+            return timezone
+
+
+def test_an_explicit_description_does_not_need_a_docstring() -> None:
+    @tool(SCHEMA, description="Echo it back.")
+    def no_doc(timezone: str) -> str:
+        return timezone
+
+    assert no_doc.description == "Echo it back."
+
+
 # --- the trap (Part 4.2) ---
 
 

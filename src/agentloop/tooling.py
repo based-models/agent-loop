@@ -98,7 +98,10 @@ class Registry:
 
     def signature(self, name: str) -> inspect.Signature:
         """The handler's signature, read once at registration."""
-        return self._signatures[name]
+        try:
+            return self._signatures[name]
+        except KeyError:
+            raise KeyError(f"no tool registered named {name!r}") from None
 
     def names(self) -> list[str]:
         return sorted(self._by_name)

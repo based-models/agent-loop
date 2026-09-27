@@ -14,7 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
-from agentloop.errors import AuthError
+from agentloop.errors import AuthError, ConfigurationError
 from agentloop.observer import LoopObserver
 from agentloop.provider import LLMClient
 from agentloop.retry import RetryingClient, RetryPolicy
@@ -133,7 +133,7 @@ def build_client(
         case "openai":
             inner = _build_openai(settings)
         case _:
-            raise ValueError(f"unsupported provider: {settings.provider!r}")
+            raise ConfigurationError(f"unsupported provider: {settings.provider!r}")
 
     return RetryingClient(
         inner,
@@ -168,12 +168,12 @@ def _build_modal(settings: Settings) -> LLMClient:
     from agentloop.providers.modal import build_modal_client
 
     if not settings.modal_endpoint_url:
-        raise ValueError("MODAL_ENDPOINT_URL is not set")
+        raise ConfigurationError("MODAL_ENDPOINT_URL is not set")
 
     token_id = settings.modal_proxy_token_id
     token_secret = settings.modal_proxy_token_secret
     if (token_id is None) != (token_secret is None):
-        raise ValueError(
+        raise ConfigurationError(
             "MODAL_PROXY_TOKEN_ID and MODAL_PROXY_TOKEN_SECRET must be set together "
             "(or both left unset for an --unauthenticated endpoint)"
         )

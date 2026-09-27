@@ -30,6 +30,16 @@ class LoopBudgetExceeded(AgentLoopError):
     """The agent loop ran out of iterations or wall-clock time."""
 
 
+class ConfigurationError(AgentLoopError, ValueError):
+    """Required configuration is missing or contradictory, before any provider is touched.
+
+    Subclasses `ValueError` too, since that's what callers reasonably expect for a
+    bad constructor argument -- but it's also an `AgentLoopError`, so `except
+    AgentLoopError` catches a misconfigured provider the same way it catches a
+    provider that rejected the request.
+    """
+
+
 class ProviderError(AgentLoopError):
     """Something went wrong talking to a provider."""
 

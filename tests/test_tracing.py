@@ -153,6 +153,21 @@ def test_tool_span_carries_the_call_id(exporter: InMemorySpanExporter) -> None:
     assert attrs(tool)["agentloop.tool.is_error"] is False
 
 
+def test_result_bytes_is_the_encoded_byte_length_not_the_char_count(
+    exporter: InMemorySpanExporter,
+) -> None:
+    # Multi-byte UTF-8 text (accents, emoji) must not under-report its size.
+    text = "héllo wörld 😀"
+    drive(exporter, resp(echo_call(text), stop=StopReason.TOOL_USE),
+          resp(TextPart(text="done")))
+    tool = next(
+        s for s in exporter.get_finished_spans() if s.name == "execute_tool echo"
+    )
+    expected = len(f"echoed: {text}".encode())
+    assert attrs(tool)["agentloop.tool.result_bytes"] == expected
+    assert expected > len(f"echoed: {text}")   # the bug this guards against
+
+
 def test_a_failed_tool_sets_span_status_error(exporter: InMemorySpanExporter) -> None:
     drive(exporter,
           resp(ToolCallPart(id="c1", tool_name="boom", arguments={}),

@@ -83,9 +83,14 @@ class RetryingClient:
         raise AssertionError("unreachable: the loop always returns or raises")
 
     def _delay_for(self, attempt: int, error: ProviderError) -> float:
-        """Honour the server's Retry-After if it sent one; otherwise back off."""
+        """Honour the server's Retry-After if it sent one; otherwise back off.
+
+        Still capped at `max_delay`: a server-supplied value is a request, not
+        an override of the caller's own ceiling -- a hostile or misconfigured
+        `Retry-After: 3600` should not block far past what the policy allows.
+        """
         if error.retry_after is not None:
-            return error.retry_after
+            return min(error.retry_after, self._policy.max_delay)
         backoff = self._policy.base_delay * (2.0 ** (attempt - 1))
         # Jitter stops N rate-limited agents retrying in lockstep.
         return min(backoff + random.uniform(0, JITTER_SECONDS), self._policy.max_delay)
