@@ -26,7 +26,7 @@ from opentelemetry.trace import Span, Status, StatusCode
 
 from agentloop.errors import ProviderError
 from agentloop.provider import ModelRequest, ModelResponse
-from agentloop.transcript import ToolCallPart, ToolResultPart
+from agentloop.transcript import HostedToolPart, ToolCallPart, ToolResultPart
 
 if TYPE_CHECKING:  # pragma: no cover - the SDK is the [otel] extra
     from opentelemetry.sdk.trace import TracerProvider
@@ -194,6 +194,10 @@ class OTelObserver:
             span.set_attribute(
                 "agentloop.response.raw_stop_reason", response.raw_stop_reason
             )
+        # A count, never the queries: those are content (see capture_content).
+        hosted = sum(isinstance(part, HostedToolPart) for part in response.content)
+        if hosted:
+            span.set_attribute("agentloop.hosted_tool.calls", hosted)
         span.end()
         self._model_span = None
 

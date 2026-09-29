@@ -1,15 +1,21 @@
 """The OpenAI-compatible adapter, shared by OpenRouter, Modal, and OpenAI.
 
-All three speak the same wire protocol; they differ in base URL, auth headers,
-and the handful of behaviours captured in `Quirks`. Translation is module-level
-functions so it can be tested with a dict and no network.
+Two layers. `OpenAICompatClient` is the TRANSPORT: base URL, auth headers,
+timeouts, HTTP error classification, the non-JSON guard, `close`. A `Codec` is
+the WIRE FORMAT: how a canonical request becomes a body and a body becomes a
+canonical response. This module is also the Chat Completions codec
+(`/chat/completions`, `api="completions"`), which all three providers speak;
+`_openai_responses.py` is the Responses codec (`api="responses"`, OpenAI only).
+Translation is module-level functions so it can be tested with a dict and no
+network.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -39,10 +45,16 @@ from agentloop.providers._common import parse_retry_after
 from agentloop.transcript import (
     ContentPart,
     Message,
+    Origin,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolResultPart,
+    join_text,
 )
+
+API = "completions"
+type Api = Literal["completions", "responses"]
 
 _FINISH: dict[str, StopReason] = {
     "stop": StopReason.END_TURN,
@@ -130,11 +142,19 @@ def _call_to_wire(call: ToolCallPart) -> dict[str, Any]:
     }
 
 
-def message_to_wire(message: Message, quirks: Quirks) -> list[dict[str, Any]]:
+def message_to_wire(
+    message: Message, quirks: Quirks, provider: str | None = None
+) -> list[dict[str, Any]]:
     """One canonical message -> one OR MORE wire messages.
 
     Tool results fan out: Anthropic's single user message with N result blocks
     becomes N `{"role": "tool"}` messages, in call order.
+
+    An assistant message THIS provider produced also carries back its
+    `reasoning_details`, unchanged and in order (OpenRouter: reasoning models
+    continue their chain of thought across tool calls). Only that field comes
+    from `origin`: the message itself is rebuilt from the parts, because
+    `_calls_from_wire` may have rewritten tool-call ids the results refer to.
     """
     if message.role == "user":
         results = [p for p in message.content if isinstance(p, ToolResultPart)]
@@ -148,29 +168,41 @@ def message_to_wire(message: Message, quirks: Quirks) -> list[dict[str, Any]]:
                 }
                 for result in results
             ]
-        text = "".join(p.text for p in message.content if isinstance(p, TextPart))
-        return [{"role": "user", "content": text}]
+        return [{"role": "user", "content": join_text(message.content)}]
 
-    text = "".join(p.text for p in message.content if isinstance(p, TextPart))
+    text = join_text(message.content)
     calls = [p for p in message.content if isinstance(p, ToolCallPart)]
 
     # `None`, not "": some strict servers reject an empty string beside tool_calls.
     wire: dict[str, Any] = {"role": "assistant", "content": text or None}
     if calls:
         wire["tool_calls"] = [_call_to_wire(call) for call in calls]
+    origin = message.origin
+    if origin is not None and origin.matches(provider, API) and origin.raw:
+        details = origin.raw[0].get("reasoning_details")
+        if details:
+            wire["reasoning_details"] = details
     return [wire]
 
 
 def request_to_wire(
-    request: ModelRequest, *, model: str, quirks: Quirks
+    request: ModelRequest, *, model: str, quirks: Quirks, provider: str | None = None
 ) -> dict[str, Any]:
     """Canonical request -> an OpenAI-compatible chat/completions body."""
+    if request.hosted_tools:
+        # Refused rather than dropped: the caller asked for a capability.
+        kinds = sorted({tool.kind for tool in request.hosted_tools})
+        raise BadRequestError(
+            f"hosted tools {kinds} need the Responses API; Chat Completions has "
+            "none (use api='responses')",
+            provider=provider,
+        )
     messages: list[dict[str, Any]] = []
     if request.system:
         # Exactly one, always first. Many vLLM chat templates raise otherwise.
         messages.append({"role": "system", "content": request.system})
     for message in request.messages:
-        messages.extend(message_to_wire(message, quirks))
+        messages.extend(message_to_wire(message, quirks, provider))
 
     payload: dict[str, Any] = {
         "model": model,
@@ -301,7 +333,13 @@ def _normalize(
     choice = choices[0]
     message = choice.get("message") or {}
 
+    model = body.get("model", "")
     parts: list[ContentPart] = []
+    thinking = _reasoning_from_wire(message)
+    if thinking is not None:
+        parts.append(
+            ThinkingPart(text=thinking, provider=provider, model=model or None)
+        )
     text = message.get("content")
     if text:
         parts.append(TextPart(text=text))
@@ -317,10 +355,36 @@ def _normalize(
         stop_reason=stop,
         raw_stop_reason=choice.get("finish_reason"),
         usage=usage_from_wire(body.get("usage"), quirks),
-        model=body.get("model", ""),
+        model=model,
         provider=provider,
         request_id=body.get("id"),
+        # Kept only when there is something to replay: most turns carry none.
+        origin=(
+            Origin(provider=provider, api=API, model=model, raw=(dict(message),))
+            if message.get("reasoning_details")
+            else None
+        ),
     )
+
+
+def _reasoning_from_wire(message: Mapping[str, Any]) -> str | None:
+    """OpenRouter's readable reasoning: `reasoning`, else the readable details.
+
+    None when the model reported none. `reasoning.encrypted` details have no
+    readable text; they survive only in the origin, for replay.
+    """
+    reasoning = message.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        return reasoning
+    details = message.get("reasoning_details")
+    if not isinstance(details, list) or not details:
+        return None
+    texts = [
+        str(detail.get("text") or detail.get("summary") or "")
+        for detail in details
+        if isinstance(detail, Mapping)
+    ]
+    return "\n".join(t for t in texts if t)
 
 
 # --- errors ------------------------------------------------------------------
@@ -373,11 +437,33 @@ def _error_for_code(code: int, detail: str, **kwargs: Any) -> ProviderError:
     return ProviderError(detail, **kwargs)
 
 
+# OpenAI sends an empty balance as a 429. Seen live (Sept 2026):
+#   {"type": "insufficient_quota", "code": "credit_balance_exhausted"}
+_NO_CREDIT_MARKERS = frozenset({"insufficient_quota", "credit_balance_exhausted"})
+
+
+def _error_markers(response: httpx.Response) -> set[str]:
+    """The machine-readable `error.type` and `error.code`, when the body has them."""
+    try:
+        body = response.json()
+    except ValueError:
+        return set()
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return set()
+    return {str(error[key]) for key in ("type", "code") if error.get(key)}
+
+
 def classify_http_error(
     response: httpx.Response, *, provider: str, quirks: Quirks
 ) -> ProviderError:
     """Turn a failed HTTP response into the right exception subclass."""
     status = response.status_code
+    if status == 429 and _error_markers(response) & _NO_CREDIT_MARKERS:
+        # A 429 that retrying cannot fix: the balance will not refill itself.
+        return InsufficientCredits(
+            _extract_message(response, quirks), provider=provider, status_code=status
+        )
     return _error_for_code(
         status,
         _extract_message(response, quirks),
@@ -401,11 +487,45 @@ def classify_error_body(error: Any, *, provider: str) -> ProviderError:
     return _error_for_code(code, message, provider=provider, status_code=200)
 
 
+# --- the codec ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Codec:
+    """One OpenAI wire format: where to POST, and how to translate each way."""
+
+    api: Api
+    path: str
+    request_to_wire: Callable[..., dict[str, Any]]
+    response_from_wire: Callable[..., ModelResponse]
+    hosted_tools: frozenset[str]
+
+
+COMPLETIONS = Codec(
+    api="completions",
+    path="/chat/completions",
+    request_to_wire=request_to_wire,
+    response_from_wire=response_from_wire,
+    hosted_tools=frozenset(),
+)
+
+
+def codec_for(api: Api) -> Codec:
+    if api == "completions":
+        return COMPLETIONS
+    if api == "responses":
+        # Imported here: the Responses codec reuses helpers from this module.
+        from agentloop.providers._openai_responses import RESPONSES
+
+        return RESPONSES
+    raise ValueError(f"unknown OpenAI api {api!r}; expected 'completions' or 'responses'")
+
+
 # --- the client --------------------------------------------------------------
 
 
 class OpenAICompatClient:
-    """An LLMClient for any OpenAI-compatible chat/completions endpoint."""
+    """An LLMClient for an OpenAI-style endpoint: one transport, either codec."""
 
     def __init__(
         self,
@@ -416,19 +536,32 @@ class OpenAICompatClient:
         headers: Mapping[str, str],
         quirks: Quirks,
         timeout: httpx.Timeout,
+        api: Api = "completions",
     ) -> None:
         self.name = name
         self.model = model
         self._quirks = quirks
+        self._codec = codec_for(api)
         self._httpx = _httpx()
         self._http = self._httpx.Client(
             base_url=base_url.rstrip("/"), headers=dict(headers), timeout=timeout
         )
 
+    @property
+    def api(self) -> Api:
+        return self._codec.api
+
+    @property
+    def hosted_tools(self) -> frozenset[str]:
+        return self._codec.hosted_tools
+
     def complete(self, request: ModelRequest) -> ModelResponse:
-        payload = request_to_wire(request, model=self.model, quirks=self._quirks)
+        codec = self._codec
+        payload = codec.request_to_wire(
+            request, model=self.model, quirks=self._quirks, provider=self.name
+        )
         try:
-            response = self._http.post("/chat/completions", json=payload)
+            response = self._http.post(codec.path, json=payload)
         except self._httpx.TimeoutException as exc:
             raise ProviderTimeout(str(exc), provider=self.name) from exc
         except self._httpx.HTTPError as exc:
@@ -451,7 +584,7 @@ class OpenAICompatClient:
                 f"{self.name} returned a 200 whose body is not an object",
                 provider=self.name,
             )
-        return response_from_wire(body, provider=self.name, quirks=self._quirks)
+        return codec.response_from_wire(body, provider=self.name, quirks=self._quirks)
 
     def close(self) -> None:
         """Release the connection pool. Safe to call more than once."""

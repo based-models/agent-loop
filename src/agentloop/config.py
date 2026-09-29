@@ -20,6 +20,7 @@ from agentloop.provider import LLMClient
 from agentloop.retry import RetryingClient, RetryPolicy
 
 type Provider = Literal["anthropic", "openrouter", "modal", "openai"]
+type OpenAIApi = Literal["responses", "completions"]
 
 
 class Settings(BaseModel):
@@ -51,6 +52,8 @@ class Settings(BaseModel):
 
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.1"
+    # Responses is OpenAI's current API and the only one with hosted tools.
+    openai_api: OpenAIApi = "responses"
 
     # TOTAL attempts, first one included: 3 means up to two retries. Applies to
     # every provider -- the Anthropic SDK's own retries are switched off.
@@ -111,6 +114,7 @@ class Settings(BaseModel):
             modal_proxy_token_secret=env.get("MODAL_PROXY_TOKEN_SECRET"),  # type: ignore[arg-type]
             openai_api_key=env.get("OPENAI_API_KEY"),                # type: ignore[arg-type]
             openai_model=env.get("OPENAI_MODEL", "gpt-5.1"),
+            openai_api=env.get("OPENAI_API", "responses"),          # type: ignore[arg-type]
             # The raw string: pydantic coerces it, and rejects "three" with a
             # ValidationError that names the field, where int() would not.
             max_attempts=env.get("LLM_MAX_ATTEMPTS", "3"),  # type: ignore[arg-type]
@@ -194,4 +198,5 @@ def _build_openai(settings: Settings) -> LLMClient:
     return build_openai_client(
         api_key=settings.openai_api_key.get_secret_value(),
         model=settings.openai_model,
+        api=settings.openai_api,
     )

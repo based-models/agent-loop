@@ -193,3 +193,26 @@ def test_config_imports_no_provider_sdk_at_module_scope() -> None:
             roots.add(node.module.split(".")[0])
     assert "anthropic" not in roots
     assert "httpx" not in roots
+
+
+# --- which OpenAI API ---
+
+
+def test_openai_defaults_to_responses() -> None:
+    assert Settings.from_env({}).openai_api == "responses"
+
+
+def test_openai_api_is_read_from_the_mapping() -> None:
+    assert Settings.from_env({"OPENAI_API": "completions"}).openai_api == "completions"
+
+
+def test_an_unknown_openai_api_names_the_field() -> None:
+    with pytest.raises(ValidationError, match="openai_api"):
+        Settings.from_env({"OPENAI_API": "chat"})
+
+
+@pytest.mark.parametrize(("api", "hosted"), [("responses", {"web_search"}), ("completions", set())])
+def test_build_client_speaks_the_configured_openai_api(api: str, hosted: set[str]) -> None:
+    client = build_client(settings(provider="openai", openai_api_key="sk-x", openai_api=api))
+    assert client.hosted_tools == frozenset(hosted)  # type: ignore[attr-defined]
+    assert client.api == api                         # type: ignore[attr-defined]

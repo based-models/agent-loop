@@ -10,10 +10,17 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 
 from agentloop.errors import LoopBudgetExceeded
 from agentloop.observer import LoopObserver, NullObserver, guarded
-from agentloop.provider import LLMClient, ModelRequest, ModelResponse, StopReason
+from agentloop.provider import (
+    HostedTool,
+    LLMClient,
+    ModelRequest,
+    ModelResponse,
+    StopReason,
+)
 from agentloop.tooling import Registry, ToolDeps, run_tools
 from agentloop.transcript import ToolCallPart, Transcript
 
@@ -47,6 +54,7 @@ def run_conversation(
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     deadline_seconds: float | None = DEFAULT_DEADLINE_SECONDS,
     observer: LoopObserver | None = None,
+    hosted_tools: Sequence[HostedTool] = (),
 ) -> Transcript:
     """Run the agent until the model stops asking for tools.
 
@@ -58,9 +66,16 @@ def run_conversation(
     so a run can overshoot by up to one turn -- and a final answer that lands late
     is still returned, because discarding finished work helps nobody. Bound a
     single call with the client's own timeout.
+
+    `hosted_tools` are declared on every request; the provider runs them. A turn
+    the provider pauses (StopReason.PAUSED) is sent back unchanged and continued
+    -- without a user message -- and the continuation joins the SAME assistant
+    message, because it is one turn. Each continuation counts as an iteration.
     """
     watcher = guarded(observer)
     started = time.monotonic()
+    hosted = tuple(hosted_tools)
+    continuing = False  # the last assistant message is a paused, open turn
 
     with watcher.conversation():
         for _ in range(max_iterations):
@@ -79,6 +94,7 @@ def run_conversation(
                 system=system,
                 tools=registry.schemas(),
                 max_tokens=max_tokens,
+                hosted_tools=hosted,
             )
             watcher.on_request(request)
             response = client.complete(request)  # retries live BELOW this line
@@ -93,7 +109,15 @@ def run_conversation(
                 )
                 continue  # F1: do NOT append this turn
 
-            transcript.add_assistant_message(response.content)
+            if continuing:
+                transcript.extend_last_assistant(response.content, response.origin)
+            else:
+                transcript.add_assistant_message(response.content, response.origin)
+
+            continuing = response.stop_reason is StopReason.PAUSED
+            if continuing:
+                logger.debug("provider paused the turn; continuing it")
+                continue
 
             if response.stop_reason is not StopReason.TOOL_USE:
                 if response.stop_reason is StopReason.UNKNOWN:

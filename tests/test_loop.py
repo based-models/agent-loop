@@ -7,11 +7,13 @@ from pydantic import BaseModel, ConfigDict
 
 from agentloop.errors import LoopBudgetExceeded
 from agentloop.loop import ListObserver, run_conversation
-from agentloop.provider import ModelRequest, ModelResponse, StopReason, Usage
+from agentloop.provider import HostedTool, ModelRequest, ModelResponse, StopReason, Usage
 from agentloop.providers._openai_compat import Quirks, response_from_wire
 from agentloop.tooling import ApprovalHook, Registry, ToolSpec, allow_all
 from agentloop.transcript import (
     ContentPart,
+    HostedToolPart,
+    Origin,
     TextPart,
     ToolCallPart,
     Transcript,
@@ -333,3 +335,42 @@ def test_an_observer_that_raises_on_a_response_does_not_end_the_run() -> None:
     transcript = run(ScriptedClient(resp(TextPart(text="done"))),
                      observer=BrokenResponseObserver())
     assert final_text(transcript) == "done"
+
+
+# --- a provider-paused turn (Anthropic pause_turn) ---
+
+
+def paused(*parts: ContentPart, stop: StopReason, raw: str) -> ModelResponse:
+    return ModelResponse(
+        content=tuple(parts), stop_reason=stop, usage=Usage(), model="fake-1",
+        provider="fake",
+        origin=Origin(provider="fake", api="messages", model="fake-1", raw=({"b": raw},)),
+    )
+
+
+def test_a_paused_turn_is_continued_as_one_assistant_message() -> None:
+    search = HostedToolPart(kind="web_search", query="q")
+    client = ScriptedClient(
+        paused(TextPart(text="Searching."), search, stop=StopReason.PAUSED, raw="one"),
+        paused(TextPart(text="Found it."), stop=StopReason.END_TURN, raw="two"),
+    )
+    transcript = run(client, hosted_tools=(HostedTool(kind="web_search"),))
+
+    # continued WITHOUT a user message: the second request ends on the paused turn
+    assert [m.role for m in client.requests[1].messages] == ["user", "assistant"]
+    assert client.requests[1].hosted_tools == (HostedTool(kind="web_search"),)
+    # and the continuation joined that same message, raw blocks in order
+    assert [m.role for m in transcript.messages] == ["user", "assistant"]
+    last = transcript.messages[-1]
+    assert [type(p).__name__ for p in last.content] == ["TextPart", "HostedToolPart", "TextPart"]
+    assert last.origin is not None
+    assert last.origin.raw == ({"b": "one"}, {"b": "two"})
+    assert final_text(transcript) == "Searching. Found it."
+
+
+def test_a_turn_that_keeps_pausing_hits_the_iteration_budget() -> None:
+    client = ScriptedClient(*[
+        paused(TextPart(text="..."), stop=StopReason.PAUSED, raw=str(i)) for i in range(3)
+    ])
+    with pytest.raises(LoopBudgetExceeded, match="3 iterations"):
+        run(client, max_iterations=3)

@@ -26,6 +26,31 @@ class Part(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class Source(BaseModel):
+    """A page a provider-hosted tool consulted. Readable metadata only."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    url: str
+    title: str | None = None
+
+
+class Citation(BaseModel):
+    """Evidence the model attached to its own text.
+
+    Anthropic quotes the source (`cited_text`); OpenAI points at a span of the
+    text instead (`start`/`end`). Each fills what its API returns.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    url: str
+    title: str | None = None
+    cited_text: str | None = None
+    start: int | None = None
+    end: int | None = None
+
+
 class TextPart(Part):
     """
     A text part, which is just a string.
@@ -33,6 +58,7 @@ class TextPart(Part):
 
     type: Literal["text"] = "text"
     text: str = Field(..., description="The text content of this part.")
+    citations: tuple[Citation, ...] = ()
 
 
 class ToolCallPart(Part):
@@ -83,10 +109,49 @@ class ThinkingPart(Part):
     raw: Any | None = Field(default=None, description="The whole original block, verbatim.")
 
 
-# tells pydantic to go to the matching class vs try all four
+class HostedToolPart(Part):
+    """A tool the PROVIDER ran during this turn: a web search, say.
+
+    A readable summary for observers and applications. It is never dispatched
+    and never paired with a result. The bytes a provider needs to continue the
+    conversation (encrypted results, citation indices) live in `Message.origin`,
+    not here.
+    """
+
+    type: Literal["hosted_tool"] = "hosted_tool"
+    kind: str = Field(min_length=1)
+    call_id: str | None = None
+    query: str | None = None
+    sources: tuple[Source, ...] = ()
+    error: str | None = None
+
+
+# tells pydantic to go to the matching class vs try them all
 type ContentPart = Annotated[
-    TextPart | ToolCallPart | ToolResultPart | ThinkingPart, Field(discriminator="type")
+    TextPart | ToolCallPart | ToolResultPart | ThinkingPart | HostedToolPart,
+    Field(discriminator="type"),
 ]
+
+
+class Origin(BaseModel):
+    """Where an assistant message came from, and its exact wire form.
+
+    The canonical parts are a portable VIEW of the turn. Some providers need the
+    turn back byte for byte -- Anthropic rejects altered search results, OpenAI
+    needs reasoning items and their order -- so the adapter that produced it
+    keeps its own blocks here. An adapter whose `(provider, api)` matches replays
+    `raw`; any other adapter builds from the parts and drops what cannot move.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider: str
+    api: str
+    model: str
+    raw: tuple[dict[str, Any], ...]
+
+    def matches(self, provider: str | None, api: str) -> bool:
+        return provider is not None and (self.provider, self.api) == (provider, api)
 
 
 class Message(BaseModel):
@@ -95,6 +160,7 @@ class Message(BaseModel):
     content: tuple[ContentPart, ...] = Field(
         min_length=1, description="The content of the message, as a tuple of parts."
     )
+    origin: Origin | None = None
 
 
 class Transcript(BaseModel):
@@ -113,12 +179,34 @@ class Transcript(BaseModel):
 
         self.messages.append(Message(role="user", content=(TextPart(text=text),)))
 
-    def add_assistant_message(self, parts: Sequence[ContentPart]) -> None:
+    def add_assistant_message(
+        self, parts: Sequence[ContentPart], origin: Origin | None = None
+    ) -> None:
         """
         Add an assistant message to the transcript.
         """
 
-        self.messages.append(Message(role="assistant", content=tuple(parts)))
+        self.messages.append(Message(role="assistant", content=tuple(parts), origin=origin))
+
+    def extend_last_assistant(
+        self, parts: Sequence[ContentPart], origin: Origin | None = None
+    ) -> None:
+        """Continue the last assistant message: a turn the provider paused.
+
+        One logical turn stays one message, so its wire form (`origin.raw`) is
+        the paused blocks followed by the continuation, in order.
+        """
+        if not self.messages or self.messages[-1].role != "assistant":
+            raise TranscriptError("no assistant message to continue")
+        last = self.messages[-1]
+        merged: Origin | None = None
+        if last.origin is not None and origin is not None and last.origin.matches(
+            origin.provider, origin.api
+        ):
+            merged = last.origin.model_copy(update={"raw": last.origin.raw + origin.raw})
+        self.messages[-1] = Message(
+            role="assistant", content=last.content + tuple(parts), origin=merged
+        )
 
     def add_tool_results(self, results: Sequence[ToolResultPart]) -> None:
         """
@@ -175,6 +263,14 @@ class Transcript(BaseModel):
 
         for index, message in enumerate(self.messages):
             results = [p.call_id for p in message.content if isinstance(p, ToolResultPart)]
+
+            if message.role != "assistant" and any(
+                isinstance(p, HostedToolPart) for p in message.content
+            ):
+                raise TranscriptError(
+                    f"message {index} is from the {message.role} but carries a "
+                    "provider-hosted tool call"
+                )
 
             if awaiting is not None:
                 if message.role != "user":
@@ -234,12 +330,43 @@ def from_jsonl(lines: Iterable[str]) -> Transcript:
         ]
     )
 
+def join_text(parts: Iterable[ContentPart]) -> str:
+    """The text parts of a message, joined into one readable string.
+
+    A space goes between two parts only where the seam needs one. Separate
+    sentences ("I'll search." then "The answer is...") get one. Anthropic's
+    citation splits break mid-sentence and keep their own spacing ("Based on the
+    results, " + "Shannon was..."), or end right before punctuation ("born in
+    1916" + "."), so a seam that already has whitespace, or that meets closing
+    punctuation or an opening bracket, is joined as-is.
+    """
+    joined = ""
+    for part in parts:
+        if not isinstance(part, TextPart) or not part.text:
+            continue
+        if joined and _needs_space(joined[-1], part.text[0]):
+            joined += " "
+        joined += part.text
+    return joined
+
+
+def _needs_space(before: str, after: str) -> bool:
+    return not (
+        before.isspace()
+        or after.isspace()
+        or after in _NO_SPACE_BEFORE
+        or before in _NO_SPACE_AFTER
+    )
+
+
+_NO_SPACE_BEFORE = frozenset(".,;:!?)]}%\u2019\u201d")
+_NO_SPACE_AFTER = frozenset("([{\u2018\u201c")
+
+
 def final_text(transcript: Transcript) -> str:
     """The text of the last assistant message. Empty if it said nothing."""
     for message in reversed(transcript.messages):
         if message.role == "assistant":
-            return "".join(
-                part.text for part in message.content if isinstance(part, TextPart)
-            )
+            return join_text(message.content)
     return ""
 

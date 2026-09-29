@@ -20,22 +20,36 @@ from agentloop.observer import (
     MultiObserver,
     NullObserver,
 )
+from agentloop.provider import HostedTool
 from agentloop.tooling import Registry, ToolDeps, ToolSpec, allow_all
-from agentloop.transcript import Transcript, final_text
+from agentloop.transcript import (
+    Citation,
+    HostedToolPart,
+    Origin,
+    Source,
+    Transcript,
+    final_text,
+    join_text,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Agent",
     "AgentLoopError",
+    "Citation",
     "ConsoleObserver",
     "Deps",
+    "HostedTool",
+    "HostedToolPart",
     "ListObserver",
     "LoopObserver",
     "MultiObserver",
     "NullObserver",
+    "Origin",
     "Registry",
     "Settings",
+    "Source",
     "ToolDeps",
     "ToolError",
     "ToolSpec",
@@ -44,6 +58,7 @@ __all__ = [
     "allow_all",
     "build_client",
     "final_text",
+    "join_text",
     "run_conversation",
     "tool",
 ]
