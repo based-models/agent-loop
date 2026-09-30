@@ -400,3 +400,8 @@ genuine async twin:
 
 Additive, not a rewrite — the real cost is item 9, doubling the provider and loop test
 surface.
+
+## Distribution follow-ups
+
+- `agent-loop-tools` must switch its requirement to `based-models-agentloop[...] @ git+ssh://git@github.com/based-models/agent-loop.git@<sha>` (dist renamed from `agentloop`; import name unchanged) and add a hashed lockfile for the PyPI deps, installing the package itself in a second `--no-deps` step (pip cannot hash a git URL).
+- Recorded wire-body fixtures (`tests/fixtures/`) were not added: the adapters' inline tests already cover the known quirks. Add real captures as they are found.

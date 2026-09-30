@@ -2,7 +2,7 @@
 
 Translation lives in module-level functions so it can be tested without an SDK,
 an API key, or a network. The SDK is imported lazily so that installing only
-`agentloop[openai-compat]` still leaves this module importable.
+`based-models-agentloop[openai-compat]` still leaves this module importable.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ def _sdk() -> Any:
     except ImportError as exc:
         raise ImportError(
             "The Anthropic provider requires the SDK.\n"
-            "  pip install 'agentloop[anthropic]'"
+            "  pip install 'based-models-agentloop[anthropic]'"
         ) from exc
     return anthropic
 

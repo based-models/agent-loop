@@ -1,51 +1,58 @@
 #!/usr/bin/env bash
-# Chapter 12. The strongest check in the tutorial: build the wheel, install it into
-# a BARE virtualenv with a single provider extra, and prove it works there.
+# Build the sdist + wheel, install the wheel into a BARE virtualenv with a single
+# provider extra, and prove it works there. Run it before every tag: the source-tree
+# suite cannot see packaging bugs, because the dev environment has every extra
+# installed and the package itself on the path.
 #
-# Needs src/agentloop/{loop,config}.py and providers/fake.py, so it does not pass
-# until chapters 7, 9 and 11 have landed. Before then it fails on the import line
-# with a ModuleNotFoundError naming what is missing, which is the correct answer.
+#   bash scripts/test-wheel.sh            # from a FRESH CLONE for release checks
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+PY=${PYTHON:-python3}
+DIST=based-models-agentloop
+PKG=based_models_agentloop
+
 rm -rf dist
-python -m build
+"$PY" -m build >/dev/null
+"$PY" -m twine check dist/*
 
-whl=$(ls dist/agentloop-*.whl)
+whl=$(ls dist/${PKG}-*.whl)
+sdist=$(ls dist/${PKG}-*.tar.gz)
 
-# A bare venv, NOT the conda environment you develop in. The conda env has every
-# extra installed, so it would happily import httpx whether or not the wheel
-# declares it. An empty interpreter is the only honest place to test this.
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-python -m venv "$tmp/venv"
-"$tmp/venv/bin/pip" install -q "${whl}[anthropic]"     # ONE extra only
+
+# A bare venv, NOT the development environment (which would happily import httpx
+# whether or not the wheel declares it).
+"$PY" -m venv "$tmp/venv"
+"$tmp/venv/bin/pip" install -q "${whl}[anthropic]"          # ONE extra only
 
 "$tmp/venv/bin/python" - <<'PY'
 import importlib.util
+from importlib.metadata import version
 
+import agentloop
 import agentloop.config
 import agentloop.loop
 import agentloop.tooling
 import agentloop.tracing
 import agentloop.transcript
-from agentloop.providers.fake import FakeClient
+from agentloop import HostedTool, join_text  # noqa: F401  public 0.2 surface
+from agentloop.providers.fake import FakeClient  # noqa: F401
 
+assert agentloop.__version__ == version("based-models-agentloop"), \
+    "agentloop.__version__ and pyproject.toml disagree"
 assert importlib.util.find_spec("pydantic") is not None, "pydantic is a core dependency"
 assert importlib.util.find_spec("httpx") is None, \
     "httpx got pulled in - the [openai-compat] extra is not actually optional"
-
-# Tracing: the API is a hard dependency, the SDK is not. The import above proves
-# agentloop.tracing ships and loads with no SDK present; these two prove the split.
 assert importlib.util.find_spec("opentelemetry") is not None, \
     "opentelemetry-api is a core dependency"
 assert importlib.util.find_spec("opentelemetry.sdk") is None, \
     "the OTel SDK got pulled in - the [otel] extra is not actually optional"
-
-# D13, asserted as a CAPABILITY rather than a habit: pydantic-settings exists to
-# reach os.environ, which is the thing the layering test bans `os` for. If it is
-# installed, the rule is a comment.
+# A capability asserted absent: pydantic-settings exists to read os.environ, which
+# the layering test bans `os` for. If it is installed the rule is a comment.
 assert importlib.util.find_spec("pydantic_settings") is None, \
-    "agentloop can reach the environment - D13 is a comment, not a property"
+    "agentloop can reach the environment"
 
 from agentloop.config import Settings, build_client
 build_client(Settings(provider="anthropic", anthropic_api_key="sk-test"))
@@ -60,7 +67,7 @@ try:
         agentloop.config.Settings(provider="openrouter", openrouter_api_key="x")
     )
 except ImportError as exc:
-    assert "agentloop[openai-compat]" in str(exc), f"unhelpful error: {exc}"
+    assert "based-models-agentloop[openai-compat]" in str(exc), f"unhelpful error: {exc}"
     print("ok: the missing extra names the fix")
 else:
     raise SystemExit("expected ImportError for the missing [openai-compat] extra")
@@ -69,12 +76,10 @@ PY
 "$tmp/venv/bin/python" - <<'PY'
 import agentloop.tracing
 
-# D14, asserted as a capability rather than a promise: configure_tracing installs a
-# global provider, and without the [otel] extra it cannot -- loudly, naming the fix.
 try:
     agentloop.tracing.configure_tracing("http://localhost:4318")
 except ImportError as exc:
-    assert "agentloop[otel]" in str(exc), f"unhelpful error: {exc}"
+    assert "based-models-agentloop[otel]" in str(exc), f"unhelpful error: {exc}"
     print("ok: tracing degrades with a message that names the extra")
 else:
     raise SystemExit("expected ImportError for the missing [otel] extra")
@@ -85,20 +90,40 @@ import sys
 
 import agentloop
 
-# The lazy imports in agent.py and __init__.py, asserted. A module-scope
-# `from agentloop.tracing import OTelObserver` anywhere in the import graph would
-# fail this, and would make "the API costs nothing at rest" untrue.
+# Laziness is invisible in a diff: hoisting an import to module scope passes every
+# other check. Only a fresh interpreter looking at sys.modules can see it.
 assert "opentelemetry" not in sys.modules, \
     "importing agentloop loaded OpenTelemetry - check agent.py's lazy import"
+for vendor in ("anthropic", "httpx"):
+    assert vendor not in sys.modules, f"importing agentloop loaded {vendor}"
 print("ok: a bare import stays cheap")
 PY
 
-unzip -l "$whl" | grep -q "agentloop/py.typed" && echo "ok: py.typed shipped"
+# The full install: every provider module must at least import.
+"$PY" -m venv "$tmp/full"
+"$tmp/full/bin/pip" install -q "${whl}[all]"
+"$tmp/full/bin/python" - <<'PY'
+import importlib
+import pkgutil
 
-# examples/ and scripts/ are consumers of the package, not part of it.
-for excluded in examples scripts tests; do
-    if unzip -l "$whl" | grep -q "${excluded}/"; then
-        echo "FAIL: ${excluded}/ was swept into the wheel"; exit 1
+import agentloop.providers as providers
+
+names = [m.name for m in pkgutil.iter_modules(providers.__path__)]
+assert names, "no provider modules found"
+for name in names:
+    importlib.import_module(f"agentloop.providers.{name}")
+print(f"ok: all {len(names)} provider modules import with [all]")
+PY
+
+contents=$(unzip -Z1 "$whl")
+grep -qx "agentloop/py.typed" <<<"$contents" && echo "ok: py.typed shipped"
+
+# Only the package and its metadata: no tests, scripts, docs or examples, in the wheel
+# or the sdist.
+for archive in wheel sdist; do
+    if [ "$archive" = wheel ]; then listing=$contents; else listing=$(tar tzf "$sdist"); fi
+    if grep -E '(^|/)(tests|scripts|docs|examples|\.github|scratch)/' <<<"$listing"; then
+        echo "FAIL: unexpected files in the $archive"; exit 1
     fi
 done
-echo "ok: the wheel contains the package and nothing else"
+echo "ok: the wheel and sdist contain the package and nothing else"

@@ -7,7 +7,7 @@ this whole system.
 
 Nothing in this module knows what a file or a shell is. `ToolDeps` asks for the
 approval hook and nothing else; the application supplies a bundle carrying
-whatever its own tools need. See `examples/datetime_agent.py` for one such bundle.
+whatever its own tools need. See `docs/examples/` for one such bundle.
 """
 
 from __future__ import annotations

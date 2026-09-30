@@ -178,7 +178,7 @@ def test_openai_is_wrapped_in_retries() -> None:
 
 
 def test_config_imports_no_provider_sdk_at_module_scope() -> None:
-    # what makes `pip install agentloop[openai-compat]` work without `anthropic`
+    # what makes `pip install based-models-agentloop[openai-compat]` work without `anthropic`
     import ast
     import inspect
 

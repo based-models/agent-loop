@@ -9,6 +9,7 @@ from agentloop.errors import LoopBudgetExceeded
 from agentloop.loop import ListObserver, run_conversation
 from agentloop.provider import HostedTool, ModelRequest, ModelResponse, StopReason, Usage
 from agentloop.providers._openai_compat import Quirks, response_from_wire
+from agentloop.providers.fake import FakeClient
 from agentloop.tooling import ApprovalHook, Registry, ToolSpec, allow_all
 from agentloop.transcript import (
     ContentPart,
@@ -43,29 +44,6 @@ REGISTRY = Registry([
 ])
 
 
-class ScriptedClient:
-    """Replays canned responses and records every request.
-
-    Chapter 11 promotes this to `agentloop.providers.fake.FakeClient`.
-    """
-
-    name = "fake"
-    model = "fake-1"
-
-    def __init__(self, *responses: ModelResponse) -> None:
-        self._queue = list(responses)
-        self.requests: list[ModelRequest] = []
-
-    def complete(self, request: ModelRequest) -> ModelResponse:
-        self.requests.append(request)
-        if not self._queue:
-            raise AssertionError(
-                f"script exhausted after {len(self.requests)} requests; "
-                "the loop asked for more than the test provides"
-            )
-        return self._queue.pop(0)
-
-
 def resp(*parts: ContentPart, stop: StopReason = StopReason.END_TURN,
          raw: str | None = None) -> ModelResponse:
     return ModelResponse(
@@ -79,7 +57,7 @@ def echo_call(call_id: str, text: str) -> ToolCallPart:
     return ToolCallPart(id=call_id, tool_name="echo", arguments={"text": text})
 
 
-def run(client: ScriptedClient, **kwargs: object) -> Transcript:
+def run(client: FakeClient, **kwargs: object) -> Transcript:
     transcript = Transcript()
     transcript.add_user_message("go")
     return run_conversation(
@@ -91,12 +69,12 @@ def run(client: ScriptedClient, **kwargs: object) -> Transcript:
 
 
 def test_terminates_on_end_turn() -> None:
-    transcript = run(ScriptedClient(resp(TextPart(text="done"))))
+    transcript = run(FakeClient(resp(TextPart(text="done"))))
     assert [m.role for m in transcript.messages] == ["user", "assistant"]
 
 
 def test_a_full_tool_round_trip() -> None:
-    client = ScriptedClient(
+    client = FakeClient(
         resp(echo_call("c1", "hello"), stop=StopReason.TOOL_USE),
         resp(TextPart(text="it said hello")),
     )
@@ -109,7 +87,7 @@ def test_a_full_tool_round_trip() -> None:
 
 
 def test_parallel_calls_in_one_turn() -> None:
-    client = ScriptedClient(
+    client = FakeClient(
         resp(echo_call("c1", "a"), echo_call("c2", "b"), stop=StopReason.TOOL_USE),
         resp(TextPart(text="did both")),
     )
@@ -122,7 +100,7 @@ def test_parallel_calls_in_one_turn() -> None:
 
 
 def test_a_turn_truncated_mid_call_is_discarded() -> None:
-    client = ScriptedClient(
+    client = FakeClient(
         resp(echo_call("c1", "hel"), stop=StopReason.MAX_TOKENS),   # cut off
         resp(TextPart(text="recovered")),
     )
@@ -137,7 +115,7 @@ def test_a_turn_truncated_mid_call_is_discarded() -> None:
 def test_a_truncated_text_turn_is_kept() -> None:
     # MAX_TOKENS with NO tool call is a clipped but usable answer — keep it
     transcript = run(
-        ScriptedClient(resp(TextPart(text="half an ans"), stop=StopReason.MAX_TOKENS))
+        FakeClient(resp(TextPart(text="half an ans"), stop=StopReason.MAX_TOKENS))
     )
     assert len(transcript.messages) == 2
 
@@ -150,7 +128,7 @@ def test_iteration_cap() -> None:
         resp(echo_call(f"c{i}", "again"), stop=StopReason.TOOL_USE) for i in range(10)
     ]
     with pytest.raises(LoopBudgetExceeded, match="iterations"):
-        run(ScriptedClient(*forever), max_iterations=5)
+        run(FakeClient(*forever), max_iterations=5)
 
 
 class ConversationOutcomeObserver(ListObserver):
@@ -181,20 +159,20 @@ def test_the_iteration_cap_is_an_observed_failure_like_the_wall_clock_budget() -
     ]
     observer = ConversationOutcomeObserver()
     with pytest.raises(LoopBudgetExceeded, match="iterations"):
-        run(ScriptedClient(*forever), max_iterations=5, observer=observer)
+        run(FakeClient(*forever), max_iterations=5, observer=observer)
     assert observer.outcome == "error"
 
 
 def test_wall_clock_budget() -> None:
     with pytest.raises(LoopBudgetExceeded, match="wall clock"):
-        run(ScriptedClient(resp(TextPart(text="hi"))), deadline_seconds=-1.0)
+        run(FakeClient(resp(TextPart(text="hi"))), deadline_seconds=-1.0)
 
 
 # --- stop reasons ---
 
 
 def test_unknown_stop_reason_terminates_and_warns() -> None:
-    client = ScriptedClient(
+    client = FakeClient(
         resp(TextPart(text="?"), stop=StopReason.UNKNOWN, raw="something_new")
     )
     transcript = run(client)
@@ -203,7 +181,7 @@ def test_unknown_stop_reason_terminates_and_warns() -> None:
 
 def test_a_refusal_terminates_the_loop() -> None:
     transcript = run(
-        ScriptedClient(resp(TextPart(text="I cannot help with that."),
+        FakeClient(resp(TextPart(text="I cannot help with that."),
                             stop=StopReason.REFUSAL))
     )
     assert len(transcript.messages) == 2
@@ -214,7 +192,7 @@ def test_a_refusal_terminates_the_loop() -> None:
 
 def test_the_observer_sees_every_event_in_order() -> None:
     observer = ListObserver()
-    client = ScriptedClient(
+    client = FakeClient(
         resp(echo_call("c1", "x"), stop=StopReason.TOOL_USE),
         resp(TextPart(text="done")),
     )
@@ -228,7 +206,7 @@ def test_the_observer_sees_every_event_in_order() -> None:
 
 
 def test_the_loop_sends_the_tool_schemas() -> None:
-    client = ScriptedClient(resp(TextPart(text="hi")))
+    client = FakeClient(resp(TextPart(text="hi")))
     run(client, system="be brief")
     request = client.requests[0]
     assert {tool.name for tool in request.tools} == {"echo"}
@@ -293,7 +271,7 @@ def test_a_truncated_call_from_a_real_adapter_is_discarded() -> None:
                                     "message": {"content": "done"}}]},
         provider="fake", quirks=Quirks(),
     )
-    client = ScriptedClient(truncated, done)
+    client = FakeClient(truncated, done)
     transcript = run(client)
     assert not any(
         isinstance(part, ToolCallPart)
@@ -315,7 +293,7 @@ class ExplodingObserver(ListObserver):
 def test_an_observer_that_raises_cannot_leave_a_call_unanswered(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    client = ScriptedClient(
+    client = FakeClient(
         resp(echo_call("c1", "a"), echo_call("c2", "b"), stop=StopReason.TOOL_USE),
         resp(TextPart(text="done")),
     )
@@ -332,7 +310,7 @@ class BrokenResponseObserver(ListObserver):
 
 
 def test_an_observer_that_raises_on_a_response_does_not_end_the_run() -> None:
-    transcript = run(ScriptedClient(resp(TextPart(text="done"))),
+    transcript = run(FakeClient(resp(TextPart(text="done"))),
                      observer=BrokenResponseObserver())
     assert final_text(transcript) == "done"
 
@@ -350,7 +328,7 @@ def paused(*parts: ContentPart, stop: StopReason, raw: str) -> ModelResponse:
 
 def test_a_paused_turn_is_continued_as_one_assistant_message() -> None:
     search = HostedToolPart(kind="web_search", query="q")
-    client = ScriptedClient(
+    client = FakeClient(
         paused(TextPart(text="Searching."), search, stop=StopReason.PAUSED, raw="one"),
         paused(TextPart(text="Found it."), stop=StopReason.END_TURN, raw="two"),
     )
@@ -369,7 +347,7 @@ def test_a_paused_turn_is_continued_as_one_assistant_message() -> None:
 
 
 def test_a_turn_that_keeps_pausing_hits_the_iteration_budget() -> None:
-    client = ScriptedClient(*[
+    client = FakeClient(*[
         paused(TextPart(text="..."), stop=StopReason.PAUSED, raw=str(i)) for i in range(3)
     ])
     with pytest.raises(LoopBudgetExceeded, match="3 iterations"):

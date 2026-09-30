@@ -84,7 +84,7 @@ def _httpx() -> Any:
     except ImportError as exc:
         raise ImportError(
             "The OpenAI-compatible adapter requires httpx.\n"
-            "  pip install 'agentloop[openai-compat]'"
+            "  pip install 'based-models-agentloop[openai-compat]'"
         ) from exc
     return httpx
 

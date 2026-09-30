@@ -290,7 +290,7 @@ def configure_tracing(endpoint: str, *, service_name: str = "agentloop") -> Trac
     except ImportError as exc:
         raise ImportError(
             "Tracing needs the OpenTelemetry SDK, which is an optional extra. "
-            "Install: pip install 'agentloop[otel]'"
+            "Install: pip install 'based-models-agentloop[otel]'"
         ) from exc
 
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))

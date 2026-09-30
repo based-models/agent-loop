@@ -1,7 +1,7 @@
 # `agentloop.providers.openai`
 
 OpenAI adapter using the shared OpenAI-compatible transport. Requires
-`agentloop[openai-compat]`.
+`based-models-agentloop[openai-compat]`.
 
 ## Constants
 

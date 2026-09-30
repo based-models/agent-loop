@@ -1,0 +1,44 @@
+name: Release
+
+# Tag vX.Y.Z -> verify -> GitHub Release carrying the wheel, sdist and checksums.
+# Nothing is uploaded to any package index: this package is private, and the name
+# `agentloop` on PyPI belongs to someone else. Consumers install from git.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # to create the release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+      - name: Tag must match pyproject.toml and __version__
+        run: |
+          python - <<'PY'
+          import os, re, tomllib
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          init = re.search(r'__version__ = "([^"]+)"',
+                           open("src/agentloop/__init__.py").read()).group(1)
+          assert tag == project == init, f"tag={tag} pyproject={project} __init__={init}"
+          PY
+      - name: Changelog has an entry for this version
+        run: grep -q "^## \[${GITHUB_REF_NAME#v}\]" CHANGELOG.md
+      - run: pip install -e ".[all,dev]"
+      - run: ruff check . && mypy && pytest -q --cov --cov-fail-under=88
+      - run: bash scripts/test-wheel.sh
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" --verify-tag \
+            --notes "See CHANGELOG.md. Install from git at this tag's commit SHA; see docs/guides/installing.md."
