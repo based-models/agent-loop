@@ -1,7 +1,7 @@
 """OpenTelemetry spans, as a LoopObserver.
 
 `loop.py` never imports OpenTelemetry: tracing attaches from outside, which is
-the payoff of the callback protocol in chapter 7.
+the payoff of the observer callback protocol.
 
 Attribute names follow the GenAI semantic conventions
 (open-telemetry/semantic-conventions-genai, docs/gen-ai/gen-ai-spans.md).
@@ -69,7 +69,7 @@ class OTelObserver:
         self._capture = capture_content
         self._model_span: Span | None = None
         self._tool_spans: dict[str, Span] = {}
-        # Tools run in a thread pool (chapter 6): on_tool_start/on_tool_end/
+        # Tools run in a thread pool (see tooling.py): on_tool_start/on_tool_end/
         # _end_unfinished all touch _tool_spans concurrently, so it needs its own
         # lock -- a separate concern from `_running`, which guards conversations.
         self._tool_spans_lock = threading.Lock()
@@ -174,7 +174,7 @@ class OTelObserver:
         span.set_attribute("gen_ai.usage.output_tokens", usage.output_tokens)
 
         # None means "not reported": omit rather than assert a zero that was
-        # never measured. See chapter 3.
+        # never measured.
         if usage.cache_read_tokens is not None:
             span.set_attribute(
                 "gen_ai.usage.cache_read.input_tokens", usage.cache_read_tokens
@@ -227,15 +227,15 @@ class OTelObserver:
         }
         if self._capture:
             # Imported here, not at module scope: this is the only use, it is
-            # unreachable with capture off, and chapter 12's allowlist is shorter
-            # for it. See Part 5.
+            # unreachable with capture off, and the import allowlist in
+            # tests/test_layering.py stays shorter for it.
             import json
 
             attributes["gen_ai.tool.call.arguments"] = json.dumps(call.arguments)
         span = _tracer.start_span(
             f"execute_tool {call.tool_name}", context=self._context, attributes=attributes
         )
-        # Keyed by call id: chapter 6 runs tools in parallel.
+        # Keyed by call id: tools run in parallel.
         with self._tool_spans_lock:
             self._tool_spans[call.id] = span
 
@@ -259,7 +259,7 @@ class OTelObserver:
             span.end()
 
     def on_text_delta(self, text: str) -> None:
-        """Reserved for streaming (chapter 17)."""
+        """Reserved for streaming."""
 
 
 # --- setup: opt-in, and the only function here that touches global state -----

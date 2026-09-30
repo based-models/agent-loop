@@ -42,7 +42,7 @@ def test_results_are_reordered_to_call_order() -> None:
         ToolCallPart(id="c1", tool_name="read", arguments={}),
         ToolCallPart(id="c2", tool_name="read", arguments={}),
     ])
-    # results arrive out of order, as they will from a thread pool in chapter 6
+    # results arrive out of order, as they will from a thread pool
     transcript.add_tool_results([
         ToolResultPart(call_id="c2", tool_name="read", content="second"),
         ToolResultPart(call_id="c1", tool_name="read", content="first"),
@@ -225,7 +225,7 @@ def test_from_jsonl_does_not_check_invariants() -> None:
 
 def test_the_transcript_module_touches_no_filesystem() -> None:
     """to_jsonl/from_jsonl used to open files. They do not any more, and this
-    is what keeps `pathlib` off chapter 11's allowlist."""
+    is what keeps `pathlib` off the import allowlist."""
     import ast
     from pathlib import Path as _Path
 

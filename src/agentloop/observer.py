@@ -1,7 +1,7 @@
 """Where the loop reports what it is doing.
 
-A callback protocol rather than an async generator: chapter 8 explains why, and
-chapter 11 implements it as OpenTelemetry spans without touching the loop.
+A callback protocol rather than an async generator, so the loop stays synchronous and
+tracing can attach from outside as OpenTelemetry spans without touching it.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class LoopObserver(Protocol):
     def on_tool_start(self, call: ToolCallPart) -> None: ...
     def on_tool_end(self, call: ToolCallPart, result: ToolResultPart) -> None: ...
 
-    # Reserved for chapter 14 (streaming / TUI). Unused in v1.
+    # Reserved for streaming / a TUI. Unused today.
     def on_text_delta(self, text: str) -> None: ...
 
 
@@ -84,7 +84,7 @@ class MultiObserver(NullObserver):
 
     Lives here rather than in the application because `agentloop` owns
     LoopObserver, so `agentloop` is the only party that can be relied on to
-    notice when the protocol grows a method. See chapter 10, Part 5.5.
+    notice when the protocol grows a method.
     """
 
     def __init__(self, *observers: LoopObserver) -> None:

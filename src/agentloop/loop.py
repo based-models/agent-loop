@@ -1,8 +1,8 @@
 """The agent loop.
 
 Reason -> act -> observe -> repeat, until the model stops asking for tools.
-Every line here is a guard against something that happens in practice; chapter
-7 part 3 names the evidence for each. Nothing in this module knows what a
+Every line here is a guard against something that happens in practice: a
+truncated tool call, an unpaired tool result, a runaway loop. Nothing in this module knows what a
 provider is.
 """
 
@@ -87,7 +87,7 @@ def run_conversation(
                     f"exceeded {deadline_seconds}s wall clock"
                 )
 
-            # ── the one place a steering message would fold in (chapter 16) ──
+            # ── the one place a steering message would fold in ──
 
             request = ModelRequest(
                 messages=tuple(transcript.messages),

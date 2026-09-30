@@ -1,6 +1,7 @@
 # Releasing
 
-Releases are cut from `main` by pushing a `vX.Y.Z` tag. Nothing is uploaded to an index.
+Releases are cut from `main` by pushing a `vX.Y.Z` tag. The pipeline publishes to PyPI with
+Trusted Publishing (OIDC); there are no API tokens to store or rotate.
 
 ## Checklist
 
@@ -21,9 +22,35 @@ Releases are cut from `main` by pushing a `vX.Y.Z` tag. Nothing is uploaded to a
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
 
-The `Release` workflow re-runs the checks, refuses to continue unless the tag, `pyproject.toml`
-and `__version__` agree and the changelog has an entry, runs `scripts/test-wheel.sh`, and
-publishes a GitHub Release with the wheel, sdist and `SHA256SUMS`.
+The `Release` workflow then:
+
+1. **build**: refuses to continue unless the tag, `pyproject.toml` and `__version__` agree
+   and the changelog has an entry; runs ruff, mypy, pytest and `scripts/test-wheel.sh`;
+   builds the wheel and sdist once and uploads them as an artifact.
+2. **publish-pypi**: waits for approval on the `pypi` GitHub environment (required
+   reviewers), then uploads those exact files via Trusted Publishing, with attestations.
+3. **github-release**: attaches the same files plus `SHA256SUMS` to the GitHub release.
+
+## One-time setup
+
+- PyPI (and TestPyPI) account with 2FA.
+- A **pending publisher** for the project on each: owner `based-models`, repository
+  `agent-loop`, workflow `release.yml`, environment `pypi` (TestPyPI: `testpypi`). The first
+  successful publish creates the project, so the name is reserved only at that moment:
+  register the pending publisher promptly.
+- GitHub environments `pypi` (with required reviewers) and `testpypi`.
+
+## Dry run
+
+Actions -> Release -> **Run workflow** (on any branch) builds, tests and publishes to
+TestPyPI only. Verify in a clean venv:
+
+```bash
+pip install --index-url https://test.pypi.org/simple/ \
+    --extra-index-url https://pypi.org/simple/ 'based-models-agentloop[anthropic]==X.Y.Z'
+```
+
+Use `--extra-index-url` only for this check: TestPyPI does not carry pydantic and friends.
 
 ## What `scripts/test-wheel.sh` proves
 
@@ -36,8 +63,9 @@ ships, and no tests/docs/examples leak into the wheel or sdist.
 
 ## Rolling back
 
-Never move or delete a published tag that anyone may have pinned. Delete the GitHub Release
-if needed, fix forward, and release `X.Y.(Z+1)`.
+PyPI files are immutable and a version number can never be reused, even after deletion.
+If a release is bad, **yank** it on PyPI (installs of a pinned version still work, fresh
+resolves skip it), fix forward, and release `X.Y.(Z+1)`. Never move a published tag.
 
 ## Versioning
 

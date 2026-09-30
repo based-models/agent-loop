@@ -26,8 +26,7 @@ type OpenAIApi = Literal["responses", "completions"]
 class Settings(BaseModel):
     """Runtime configuration. Construct it explicitly; `from_env` is opt-in.
 
-    A plain BaseModel, not pydantic-settings: see chapter 9, section 1.3. The
-    short version is that a dependency whose job is reaching os.environ would
+    A plain BaseModel, not pydantic-settings: a dependency whose job is reaching os.environ would
     make the layering test's ban on `os` a comment rather than a property.
     """
 
@@ -95,7 +94,7 @@ class Settings(BaseModel):
 
         The CALLER supplies the mapping -- `os.environ`, a dict in a test, a
         parsed secrets blob. This function never goes looking for one, which is
-        what lets `os` stay off the library's import allowlist (chapter 11).
+        what lets `os` stay off the library's import allowlist.
 
         Written out longhand on purpose: this is every environment variable the
         program understands, in one greppable place.
@@ -147,11 +146,11 @@ def build_client(
 
 
 def _build_anthropic(settings: Settings) -> LLMClient:
-    from agentloop.providers.anthropic import AnthropicClient  # lazy: see chapter 1
+    from agentloop.providers.anthropic import AnthropicClient  # lazy: keeps the extra optional
 
     key = settings.anthropic_api_key
     return AnthropicClient(
-        # None lets the SDK resolve credentials itself (chapter 4, part 4).
+        # None lets the SDK resolve credentials itself.
         api_key=key.get_secret_value() if key else None,
         model=settings.anthropic_model,
     )

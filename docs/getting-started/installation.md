@@ -1,16 +1,20 @@
 # Installation
 
-based-models-agentloop requires Python 3.12 or newer and is a **private package**: it is
-installed from its git repository, never from a package index. The import name is
-`agentloop`. See [Installing](../guides/installing.md) for the reasoning, pinning and CI
-setup. In short:
+based-models-agentloop requires Python 3.12 or newer. The import name is `agentloop`.
+Install the extra for the provider you use:
 
 ```bash
-pip install 'based-models-agentloop[anthropic] @ git+ssh://git@github.com/based-models/agent-loop.git@<sha>'
+pip install 'based-models-agentloop[anthropic]'
+pip install 'based-models-agentloop[openai-compat]'
+pip install 'based-models-agentloop[otel]'
 ```
 
-Extras: `anthropic`, `openai-compat` (OpenAI, OpenRouter, Modal), `otel` (OpenTelemetry SDK
-and OTLP HTTP exporter), and `all`.
+`openai-compat` supports OpenAI, OpenRouter, and Modal. `otel` adds the OpenTelemetry SDK
+and OTLP HTTP exporter. Install everything with:
+
+```bash
+pip install 'based-models-agentloop[all]'
+```
 
 For a checkout of this repository:
 

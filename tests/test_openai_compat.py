@@ -115,7 +115,7 @@ def test_strict_goes_inside_function_not_top_level() -> None:
         ToolSchema(name="read", description="d", parameters=EMPTY_SCHEMA), DEFAULT
     )
     assert tool["function"]["strict"] is True
-    assert "strict" not in tool                # cf. chapter 4, where it IS top-level
+    assert "strict" not in tool                # (Anthropic puts it top-level)
 
 
 def test_temperature_is_forwarded_here() -> None:

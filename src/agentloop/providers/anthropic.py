@@ -105,7 +105,7 @@ def _sdk() -> Any:
 
 
 def tool_to_wire(tool: ToolSchema) -> dict[str, Any]:
-    """One tool. `strict` is TOP-LEVEL here; chapter 5 nests it inside `function`."""
+    """One tool. `strict` is TOP-LEVEL here; OpenAI-compatible APIs nest it in `function`."""
     wire: dict[str, Any] = {
         "name": tool.name,
         "description": tool.description,

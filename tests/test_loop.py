@@ -96,7 +96,7 @@ def test_parallel_calls_in_one_turn() -> None:
     assert [p.call_id for p in results] == ["c1", "c2"]  # type: ignore[union-attr]
 
 
-# --- F1: the truncated turn (chapter 3, section 1.2) ---
+# --- the truncated turn ---
 
 
 def test_a_turn_truncated_mid_call_is_discarded() -> None:
@@ -248,7 +248,7 @@ def test_the_loop_never_names_a_use_case() -> None:
         assert term not in source
 
 
-# --- F1 through a real adapter: Rule 1 must not mask the truncation ---
+# --- the truncated turn through a real adapter: Rule 1 must not mask the truncation ---
 
 
 def test_a_truncated_call_from_a_real_adapter_is_discarded() -> None:

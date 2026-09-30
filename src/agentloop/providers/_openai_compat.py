@@ -97,8 +97,7 @@ def httpx_timeout(**kwargs: float) -> httpx.Timeout:
 class Quirks(BaseModel):
     """Behavioural differences between OpenAI-compatible servers.
 
-    Each flag is a real observed behaviour, not a hypothetical. See chapter 5,
-    part 3 for where each one comes from.
+    Each flag is a real observed behaviour, not a hypothetical.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -117,7 +116,7 @@ class Quirks(BaseModel):
 
 
 def tool_to_wire(tool: ToolSchema, quirks: Quirks) -> dict[str, Any]:
-    """`strict` goes INSIDE `function` here; chapter 4 puts it top-level."""
+    """`strict` goes INSIDE `function` here; Anthropic's API puts it top-level."""
     function: dict[str, Any] = {
         "name": tool.name,
         "description": tool.description,

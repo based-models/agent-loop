@@ -118,6 +118,17 @@ PY
 contents=$(unzip -Z1 "$whl")
 grep -qx "agentloop/py.typed" <<<"$contents" && echo "ok: py.typed shipped"
 
+# License and metadata PyPI will show.
+grep -q "^based_models_agentloop-.*dist-info/licenses/LICENSE$" <<<"$contents" \
+    || { echo "FAIL: LICENSE is not in the wheel"; exit 1; }
+meta=$(unzip -p "$whl" '*.dist-info/METADATA')
+grep -q "^License-Expression: Apache-2.0" <<<"$meta" \
+    || { echo "FAIL: License-Expression is not Apache-2.0"; exit 1; }
+if grep -q "Private :: Do Not Upload" <<<"$meta"; then
+    echo "FAIL: the Private classifier would make PyPI reject the upload"; exit 1
+fi
+echo "ok: license and metadata are publishable"
+
 # Only the package and its metadata: no tests, scripts, docs or examples, in the wheel
 # or the sdist.
 for archive in wheel sdist; do
