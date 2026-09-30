@@ -1,7 +1,7 @@
 # `agentloop.providers.anthropic`
 
 Anthropic Messages API adapter. The SDK is imported lazily and requires
-`agentloop[anthropic]`.
+`based-models-agentloop[anthropic]`.
 
 ## Constants
 

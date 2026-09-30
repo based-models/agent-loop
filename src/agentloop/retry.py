@@ -15,7 +15,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agentloop.errors import ProviderError
 from agentloop.observer import LoopObserver, guarded
-from agentloop.provider import LLMClient, ModelRequest, ModelResponse
+from agentloop.provider import (
+    LLMClient,
+    ModelRequest,
+    ModelResponse,
+    supported_hosted_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +59,15 @@ class RetryingClient:
     @property
     def model(self) -> str:
         return self._inner.model
+
+    @property
+    def hosted_tools(self) -> frozenset[str]:
+        return supported_hosted_tools(self._inner)
+
+    @property
+    def api(self) -> str | None:
+        """Which of a provider's APIs the inner client speaks, if it has several."""
+        return getattr(self._inner, "api", None)
 
     def close(self) -> None:
         """Close the wrapped client, if it has anything to close."""

@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from agentloop.errors import ConfigurationError
 from agentloop.loop import (
     DEFAULT_DEADLINE_SECONDS,
     DEFAULT_MAX_ITERATIONS,
@@ -19,7 +20,7 @@ from agentloop.loop import (
     run_conversation,
 )
 from agentloop.observer import LoopObserver
-from agentloop.provider import LLMClient
+from agentloop.provider import HostedTool, LLMClient, supported_hosted_tools
 from agentloop.tooling import (
     ApprovalHook,
     Handler,
@@ -124,7 +125,7 @@ class Agent:
 
     def __init__(
         self,
-        tools: Sequence[ToolSpec],
+        tools: Sequence[ToolSpec | HostedTool],
         *,
         client: LLMClient,
         system: str | None = None,
@@ -151,7 +152,10 @@ class Agent:
         `RuntimeError` rather than corrupting the in-flight spans -- build one
         traced `Agent` per concurrent conversation instead.
         """
-        self._registry = Registry(tools)
+        specs = [t for t in tools if isinstance(t, ToolSpec)]
+        self._hosted = tuple(t for t in tools if isinstance(t, HostedTool))
+        _check_hosted(self._hosted, specs, client)
+        self._registry = Registry(specs)
         self._client = client
         self._system = system
         self._deps: ToolDeps = deps or Deps()
@@ -169,7 +173,7 @@ class Agent:
 
     @classmethod
     def from_env(
-        cls, env: Mapping[str, str], tools: Sequence[ToolSpec], **kwargs: Any
+        cls, env: Mapping[str, str], tools: Sequence[ToolSpec | HostedTool], **kwargs: Any
     ) -> Agent:
         """Build the configured provider's client from an environment mapping.
 
@@ -225,4 +229,33 @@ class Agent:
             max_tokens=self._max_tokens,
             max_iterations=self._max_iterations,
             deadline_seconds=self._deadline_seconds,
+            hosted_tools=self._hosted,
+        )
+
+
+def _check_hosted(
+    hosted: Sequence[HostedTool], specs: Sequence[ToolSpec], client: LLMClient
+) -> None:
+    """Fail at construction, not on the first request, for a hosted tool that
+    cannot run here.
+
+    Native and client-side tools are separate, explicit choices: a hosted tool
+    the client does not support is an error naming the provider, never quietly
+    swapped for something else.
+    """
+    supported = supported_hosted_tools(client)
+    for tool in hosted:
+        if tool.kind not in supported:
+            api = getattr(client, "api", None)
+            where = f"{client.name} ({api})" if api else client.name
+            raise ConfigurationError(
+                f"{where} cannot run the hosted tool {tool.kind!r}; "
+                f"it supports {sorted(supported) or 'no hosted tools'}"
+            )
+    kinds = {tool.kind for tool in hosted}
+    clashes = sorted(spec.name for spec in specs if spec.name in kinds)
+    if clashes:
+        # Anthropic's hosted web search is itself named "web_search" on the wire.
+        raise ConfigurationError(
+            f"tool name(s) {clashes} collide with a hosted tool; rename the ToolSpec"
         )

@@ -3,8 +3,8 @@ import logging
 import pytest
 
 from agentloop import Agent, Deps, Registry, ToolSpec, tool
-from agentloop.errors import LoopBudgetExceeded
-from agentloop.provider import ModelRequest, ModelResponse, StopReason, Usage
+from agentloop.errors import ConfigurationError, LoopBudgetExceeded
+from agentloop.provider import HostedTool, ModelRequest, ModelResponse, StopReason, Usage
 from agentloop.tooling import run_tools
 from agentloop.transcript import (
     TextPart,
@@ -235,3 +235,62 @@ def test_an_agent_closes_the_client_from_env_built() -> None:
     http = agent._client._inner._http  # type: ignore[attr-defined]
     agent.close()
     assert http.is_closed
+
+
+# --- hosted tools: an explicit choice, checked at construction ---
+
+SEARCH = HostedTool(kind="web_search")
+
+
+class SearchingClient(QuietClient):
+    hosted_tools = frozenset({"web_search"})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[ModelRequest] = []
+
+    def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        return super().complete(request)
+
+
+def test_a_hosted_tool_reaches_every_request() -> None:
+    client = SearchingClient()
+    Agent([SEARCH], client=client).run("go")
+    assert client.requests[0].hosted_tools == (SEARCH,)
+    assert client.requests[0].tools == ()           # not in the registry
+
+
+def test_a_hosted_tool_the_client_cannot_run_fails_at_construction() -> None:
+    with pytest.raises(ConfigurationError, match="fake cannot run the hosted tool 'web_search'"):
+        Agent([SEARCH], client=QuietClient())
+
+
+def test_a_tool_named_like_a_hosted_tool_is_refused() -> None:
+    @tool(parameters=SCHEMA, name="web_search")
+    def my_search(timezone: str | None) -> str:
+        """Search."""
+        return ""
+
+    with pytest.raises(ConfigurationError, match="collide"):
+        Agent([my_search, SEARCH], client=SearchingClient())
+
+
+@pytest.mark.parametrize(
+    ("env", "supported"),
+    [
+        ({"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "sk-ant-x"}, True),
+        ({"LLM_PROVIDER": "openai", "OPENAI_API_KEY": "sk-x"}, True),       # responses
+        ({"LLM_PROVIDER": "openai", "OPENAI_API_KEY": "sk-x", "OPENAI_API": "completions"}, False),
+        ({"LLM_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "sk-or-x"}, False),
+        ({"LLM_PROVIDER": "modal", "MODAL_ENDPOINT_URL": "https://x.modal.run"}, False),
+    ],
+)
+def test_native_search_is_supported_where_the_provider_runs_it(
+    env: dict[str, str], supported: bool
+) -> None:
+    if supported:
+        Agent.from_env(env, [SEARCH]).close()
+    else:
+        with pytest.raises(ConfigurationError, match="cannot run the hosted tool"):
+            Agent.from_env(env, [SEARCH])

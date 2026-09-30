@@ -11,7 +11,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agentloop.transcript import ContentPart, Message
+from agentloop.transcript import ContentPart, Message, Origin
 
 
 class StopReason(StrEnum):
@@ -22,6 +22,10 @@ class StopReason(StrEnum):
          EXCEPT MAX_TOKENS, which survives. A call cut off mid-arguments must reach
          the loop as truncated, so it is discarded rather than executed.
       2. Unrecognized values map to UNKNOWN, never to END_TURN.
+
+    PAUSED is a provider-hosted tool loop stopping partway through a turn
+    (Anthropic's `pause_turn`). The turn is unfinished: the loop sends it back
+    as-is and the provider carries on.
     """
 
     END_TURN = "end_turn"
@@ -30,6 +34,7 @@ class StopReason(StrEnum):
     STOP_SEQUENCE = "stop_sequence"
     REFUSAL = "refusal"
     ERROR = "error"
+    PAUSED = "paused"
     UNKNOWN = "unknown"
 
 
@@ -51,6 +56,21 @@ class ToolSchema(BaseModel):
     strict: bool = True
 
 
+class HostedTool(BaseModel):
+    """A tool the PROVIDER runs -- declared in the request, never dispatched here.
+
+    Deliberately generic: `kind` names the capability ("web_search") and
+    `options` are passed to the adapter, which translates or rejects them. The
+    typed, validated constructors live with the tools (agentloop-tools), so this
+    library learns one idea -- hosted tools -- and nothing about the web.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: str = Field(min_length=1)
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
 class ModelRequest(BaseModel):
     """Everything needed to make one model call, in canonical form."""
 
@@ -65,6 +85,7 @@ class ModelRequest(BaseModel):
     stop_sequences: tuple[str, ...] = ()
     tool_choice: ToolChoice = "auto"
     parallel_tool_calls: bool = True
+    hosted_tools: tuple[HostedTool, ...] = ()
 
 
 class Usage(BaseModel):
@@ -96,6 +117,8 @@ class ModelResponse(BaseModel):
     provider: str
     raw_stop_reason: str | None = None
     request_id: str | None = None
+    # The adapter's own wire form of this turn, for exact replay. See Origin.
+    origin: Origin | None = None
 
 
 class LLMClient(Protocol):
@@ -111,3 +134,12 @@ class LLMClient(Protocol):
 
     # Reserved for chapter 12. Note: a SYNC iterator — streaming needs no asyncio.
     # def complete_stream(self, request: ModelRequest) -> Iterator[StreamEvent]: ...
+
+
+def supported_hosted_tools(client: object) -> frozenset[str]:
+    """The hosted tool kinds a client can run: its `hosted_tools`, if it has one.
+
+    Optional on purpose. A client that says nothing supports nothing, so a test
+    fake or a custom provider needs no new attribute to stay an LLMClient.
+    """
+    return frozenset(getattr(client, "hosted_tools", frozenset()))

@@ -10,3 +10,25 @@ environment.lock.yml
 scratch/
 tutorial/
 manual/
+examples/
+.coverage
+htmlcov/
+
+# notebooks and their checkpoints
+testing.ipynb
+.ipynb_checkpoints/
+
+# build output and virtualenvs
+build/
+.venv/
+venv/
+
+# coverage data from parallel runs
+.coverage.*
+
+# editor and OS files
+.DS_Store
+.idea/
+
+# personal editor settings (the interpreter choice is per-developer)
+.vscode/

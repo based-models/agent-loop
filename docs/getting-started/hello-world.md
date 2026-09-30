@@ -16,7 +16,7 @@ Save it as `hello.py`, configure one provider, and run `python hello.py`.
 ## Anthropic
 
 ```bash
-pip install 'agentloop[anthropic]'
+pip install 'based-models-agentloop[anthropic] @ git+ssh://git@github.com/based-models/agent-loop.git@<sha>'
 export LLM_PROVIDER=anthropic
 export ANTHROPIC_API_KEY='...'
 export ANTHROPIC_MODEL='claude-opus-5'  # optional
@@ -29,7 +29,7 @@ supports, such as an authenticated CLI profile.
 ## OpenAI
 
 ```bash
-pip install 'agentloop[openai-compat]'
+pip install 'based-models-agentloop[openai-compat] @ git+ssh://git@github.com/based-models/agent-loop.git@<sha>'
 export LLM_PROVIDER=openai
 export OPENAI_API_KEY='...'
 export OPENAI_MODEL='gpt-5.1'  # optional
@@ -39,7 +39,7 @@ python hello.py
 ## OpenRouter
 
 ```bash
-pip install 'agentloop[openai-compat]'
+pip install 'based-models-agentloop[openai-compat] @ git+ssh://git@github.com/based-models/agent-loop.git@<sha>'
 export LLM_PROVIDER=openrouter
 export OPENROUTER_API_KEY='...'
 export OPENROUTER_MODEL='openrouter/free'  # optional
@@ -49,7 +49,7 @@ python hello.py
 ## Modal
 
 ```bash
-pip install 'agentloop[openai-compat]'
+pip install 'based-models-agentloop[openai-compat] @ git+ssh://git@github.com/based-models/agent-loop.git@<sha>'
 export LLM_PROVIDER=modal
 export MODAL_ENDPOINT_URL='https://example--model.modal.run'
 export MODAL_ENDPOINT_MODEL='Qwen/Qwen3.6-35B-A3B-FP8'  # optional

@@ -2,12 +2,14 @@
 
 Translation lives in module-level functions so it can be tested without an SDK,
 an API key, or a network. The SDK is imported lazily so that installing only
-`agentloop[openai-compat]` still leaves this module importable.
+`based-models-agentloop[openai-compat]` still leaves this module importable.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -24,16 +26,25 @@ from agentloop.errors import (
     ResponseInvalid,
 )
 from agentloop.provider import (
+    HostedTool,
     ModelRequest,
     ModelResponse,
     StopReason,
     ToolSchema,
     Usage,
 )
-from agentloop.providers._common import parse_retry_after
+from agentloop.providers._common import (
+    parse_retry_after,
+    user_location,
+    web_search_options,
+)
 from agentloop.transcript import (
+    Citation,
     ContentPart,
+    HostedToolPart,
     Message,
+    Origin,
+    Source,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -46,6 +57,17 @@ if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at ru
 logger = logging.getLogger(__name__)
 
 PROVIDER = "anthropic"
+API = "messages"
+HOSTED_TOOLS = frozenset({"web_search"})
+
+# Basic search is the DEFAULT: results reach the model as search-result blocks,
+# so it can cite them, and it runs on every model and is ZDR-eligible.
+# Dynamic filtering (`dynamic_filtering=True`, Claude 4.6+) has the model run
+# code that filters results before they reach its context. The model then reads
+# the program's output, not the results, so it returns NO citations -- measured
+# live, 0 of 6 requests, versus citations on every basic-search request.
+WEB_SEARCH_FILTERED = "web_search_20260209"
+WEB_SEARCH_BASIC = "web_search_20250305"
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_TIMEOUT_SECONDS = 600.0
 
@@ -55,7 +77,7 @@ _STOP: dict[str, StopReason] = {
     "max_tokens": StopReason.MAX_TOKENS,
     "stop_sequence": StopReason.STOP_SEQUENCE,
     "refusal": StopReason.REFUSAL,
-    "pause_turn": StopReason.UNKNOWN,
+    "pause_turn": StopReason.PAUSED,
 }
 
 # Arrives as an HTTP 200 but means the request did not fit.
@@ -74,7 +96,7 @@ def _sdk() -> Any:
     except ImportError as exc:
         raise ImportError(
             "The Anthropic provider requires the SDK.\n"
-            "  pip install 'agentloop[anthropic]'"
+            "  pip install 'based-models-agentloop[anthropic]'"
         ) from exc
     return anthropic
 
@@ -104,8 +126,35 @@ def _thinking_to_wire(part: ThinkingPart) -> dict[str, Any]:
     return block
 
 
+def hosted_tool_to_wire(tool: HostedTool) -> dict[str, Any]:
+    """A hosted web search -> the server tool. Unsupported tuning is logged."""
+    options = web_search_options(
+        tool, provider=PROVIDER, unsupported=("search_context_size",)
+    )
+    filtered = options.get("dynamic_filtering", False)
+    wire: dict[str, Any] = {
+        "type": WEB_SEARCH_FILTERED if filtered else WEB_SEARCH_BASIC,
+        "name": "web_search",
+    }
+    for key in ("allowed_domains", "blocked_domains"):
+        if options.get(key):
+            wire[key] = list(options[key])
+    if options.get("max_uses") is not None:
+        wire["max_uses"] = options["max_uses"]
+    if options.get("user_location"):
+        wire["user_location"] = user_location(options["user_location"])
+    return wire
+
+
 def message_to_wire(message: Message) -> dict[str, Any]:
-    """One canonical message -> one Anthropic message. Always one to one."""
+    """One canonical message -> one Anthropic message. Always one to one.
+
+    An assistant turn this adapter produced goes back EXACTLY as received:
+    Anthropic rejects search results or citations whose encrypted fields are
+    missing or altered, and dynamic filtering adds blocks the parts do not model.
+    """
+    if message.origin is not None and message.origin.matches(PROVIDER, API):
+        return {"role": message.role, "content": list(message.origin.raw)}
     blocks: list[dict[str, Any]] = []
     for part in message.content:
         match part:
@@ -150,8 +199,10 @@ def request_to_wire(request: ModelRequest, *, model: str) -> dict[str, Any]:
     }
     if request.system:
         payload["system"] = request.system
-    if request.tools:
-        payload["tools"] = [tool_to_wire(tool) for tool in request.tools]
+    tools = [tool_to_wire(tool) for tool in request.tools]
+    tools += [hosted_tool_to_wire(tool) for tool in request.hosted_tools]
+    if tools:
+        payload["tools"] = tools
     if request.stop_sequences:
         payload["stop_sequences"] = list(request.stop_sequences)
     if request.tools and (request.tool_choice != "auto" or not request.parallel_tool_calls):
@@ -176,6 +227,111 @@ def usage_from_wire(raw: Any) -> Usage:
     )
 
 
+def _as_dict(value: Any) -> Any:
+    """An SDK object, a dict, or a test's SimpleNamespace -> plain JSON-able data.
+
+    `exclude_unset` mirrors how the SDK itself sends a response back: exactly the
+    fields the API returned, no more.
+    """
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", exclude_unset=True)
+    if isinstance(value, SimpleNamespace):
+        return {k: _as_dict(v) for k, v in vars(value).items()}
+    if isinstance(value, Mapping):
+        return {k: _as_dict(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_as_dict(v) for v in value]
+    return value
+
+
+def _citations(block: Mapping[str, Any]) -> tuple[Citation, ...]:
+    return tuple(
+        Citation(url=c["url"], title=c.get("title"), cited_text=c.get("cited_text"))
+        for c in block.get("citations") or ()
+        if isinstance(c, Mapping) and c.get("url")
+    )
+
+
+def _hosted_result(block: Mapping[str, Any]) -> tuple[tuple[Source, ...], str | None]:
+    """A `*_tool_result` block's readable part: sources, or an error code.
+
+    Web search: `content` is a list of results, or ONE `*_error` object; nothing
+    found is an empty list, not an error. Other tools (dynamic filtering's code
+    execution) return a successful result object too -- so only an `error_code`
+    or an `*_error` type counts as a failure.
+    """
+    content = block.get("content")
+    if isinstance(content, Mapping):
+        kind = str(content.get("type") or "")
+        if "error_code" in content or kind.endswith("_error"):
+            return (), str(content.get("error_code") or kind)
+        return (), None
+    sources = tuple(
+        Source(url=item["url"], title=item.get("title"))
+        for item in content or ()
+        if isinstance(item, Mapping) and item.get("url")
+    )
+    return sources, None
+
+
+def _parts_from_blocks(
+    blocks: list[dict[str, Any]], *, model: str
+) -> list[ContentPart]:
+    parts: list[ContentPart] = []
+    hosted: dict[str, int] = {}  # server_tool_use id -> its index in `parts`
+    for block in blocks:
+        kind = block.get("type")
+        if kind == "text":
+            parts.append(TextPart(text=block["text"], citations=_citations(block)))
+        elif kind in ("thinking", "redacted_thinking"):
+            parts.append(
+                ThinkingPart(
+                    text=block.get("thinking") or "",
+                    signature=block.get("signature"),
+                    provider=PROVIDER,
+                    model=model,
+                    raw=block,
+                )
+            )
+        elif kind == "tool_use":
+            parts.append(
+                ToolCallPart(
+                    id=block["id"], tool_name=block["name"], arguments=dict(block["input"])
+                )
+            )
+        elif kind == "server_tool_use":
+            query = (block.get("input") or {}).get("query")
+            hosted[block["id"]] = len(parts)
+            parts.append(
+                HostedToolPart(
+                    kind=block["name"],
+                    call_id=block["id"],
+                    query=query if isinstance(query, str) else None,
+                )
+            )
+        elif isinstance(kind, str) and kind.endswith("_tool_result") and "tool_use_id" in block:
+            sources, error = _hosted_result(block)
+            call_id = block["tool_use_id"]
+            if call_id in hosted:
+                index = hosted[call_id]
+                call = parts[index]
+                assert isinstance(call, HostedToolPart)
+                parts[index] = call.model_copy(update={"sources": sources, "error": error})
+            else:
+                # The call was in an earlier response: a mixed client/server turn
+                # runs the server tool on the NEXT request.
+                parts.append(
+                    HostedToolPart(
+                        kind=kind.removesuffix("_tool_result"),
+                        call_id=call_id,
+                        sources=sources,
+                        error=error,
+                    )
+                )
+        # Anything else stays only in Origin.raw: preserved for replay, not modelled.
+    return parts
+
+
 def response_from_wire(message: Any) -> ModelResponse:
     """An SDK Message -> the canonical response. Pure: no self, no network."""
     if message.stop_reason == CONTEXT_OVERFLOW_STOP_REASON:
@@ -185,31 +341,14 @@ def response_from_wire(message: Any) -> ModelResponse:
             status_code=200,
         )
 
-    parts: list[ContentPart] = []
-    for block in message.content:
-        match block.type:
-            case "text":
-                parts.append(TextPart(text=block.text))
-            case "thinking" | "redacted_thinking":
-                parts.append(
-                    ThinkingPart(
-                        text=getattr(block, "thinking", "") or "",
-                        signature=getattr(block, "signature", None),
-                        provider=PROVIDER,
-                        model=message.model,
-                        raw=block.model_dump(),
-                    )
-                )
-            case "tool_use":
-                parts.append(
-                    ToolCallPart(
-                        id=block.id,
-                        tool_name=block.name,
-                        arguments=dict(block.input),
-                    )
-                )
-            case _:
-                continue
+    blocks = [_as_dict(block) for block in message.content]
+    try:
+        parts = _parts_from_blocks(blocks, model=message.model)
+    except (KeyError, TypeError, ValidationError) as exc:
+        raise ResponseInvalid(
+            f"Anthropic returned a content block we cannot read: {exc}",
+            provider=PROVIDER,
+        ) from exc
 
     stop = _STOP.get(message.stop_reason, StopReason.UNKNOWN)
     has_call = any(isinstance(part, ToolCallPart) for part in parts)
@@ -225,6 +364,7 @@ def response_from_wire(message: Any) -> ModelResponse:
             model=message.model,
             provider=PROVIDER,
             request_id=getattr(message, "id", None),
+            origin=Origin(provider=PROVIDER, api=API, model=message.model, raw=tuple(blocks)),
         )
     except ValidationError as exc:
         raise ResponseInvalid(
@@ -283,6 +423,8 @@ class AnthropicClient:
     """An LLMClient backed by the Anthropic Messages API."""
 
     name = PROVIDER
+    api = API
+    hosted_tools = HOSTED_TOOLS
 
     def __init__(
         self,

@@ -24,7 +24,7 @@ from agentloop.providers._openai_compat import (
     response_from_wire,
     tool_to_wire,
 )
-from agentloop.transcript import Message, ToolCallPart, ToolResultPart
+from agentloop.transcript import Message, ThinkingPart, ToolCallPart, ToolResultPart
 
 DEFAULT = Quirks()
 EMPTY_SCHEMA = {
@@ -402,3 +402,79 @@ def test_a_generated_id_never_collides_with_a_real_one() -> None:
     )
     ids = [p.id for p in response.content if isinstance(p, ToolCallPart)]
     assert len(set(ids)) == 3, ids
+
+
+# --- reasoning replay (OpenRouter) ---
+
+DETAILS = [
+    {"type": "reasoning.summary", "summary": "Check the file first.", "id": "r1",
+     "format": "anthropic-claude-v1", "index": 0},
+    {"type": "reasoning.encrypted", "data": "opaque==", "id": "r2",
+     "format": "anthropic-claude-v1", "index": 1},
+]
+
+
+def reasoning_turn() -> Any:
+    return response_from_wire(
+        body("tool_calls", {
+            "content": None, "reasoning": "Check the file first.",
+            "reasoning_details": DETAILS,
+            "tool_calls": [{"type": "function",
+                            "function": {"name": "read", "arguments": "{}"}}],  # no id
+        }),
+        provider="openrouter", quirks=DEFAULT,
+    )
+
+
+def test_reasoning_becomes_a_thinking_part_and_an_origin() -> None:
+    response = reasoning_turn()
+    thinking = response.content[0]
+    assert isinstance(thinking, ThinkingPart) and thinking.text == "Check the file first."
+    assert response.origin is not None
+    assert (response.origin.provider, response.origin.api) == ("openrouter", "completions")
+
+
+def test_reasoning_details_are_replayed_unchanged_to_the_same_provider() -> None:
+    response = reasoning_turn()
+    message = Message(role="assistant", content=response.content, origin=response.origin)
+    [wire_message] = message_to_wire(message, DEFAULT, "openrouter")
+    assert wire_message["reasoning_details"] == DETAILS          # same blocks, same order
+    # The call keeps its GENERATED id -- the one the tool result answers -- so the
+    # message is rebuilt from the parts, never copied from the raw wire message.
+    call = response.content[1]
+    assert isinstance(call, ToolCallPart)
+    assert wire_message["tool_calls"][0]["id"] == call.id
+
+
+def test_reasoning_details_never_reach_another_provider() -> None:
+    response = reasoning_turn()
+    message = Message(role="assistant", content=response.content, origin=response.origin)
+    [wire_message] = message_to_wire(message, DEFAULT, "modal")
+    assert "reasoning_details" not in wire_message
+
+
+def test_a_turn_without_reasoning_details_keeps_no_origin() -> None:
+    response = response_from_wire(body("stop", {"content": "hi"}),
+                                  provider="openrouter", quirks=DEFAULT)
+    assert response.origin is None
+
+
+def test_an_empty_openai_balance_is_not_retried() -> None:
+    """The body OpenAI actually sent, captured live."""
+    error = classify_http_error(
+        http(429, json={"error": {"message": "You have no credits remaining.",
+                                  "type": "insufficient_quota", "param": None,
+                                  "code": "credit_balance_exhausted"}}),
+        provider="openai", quirks=DEFAULT,
+    )
+    assert isinstance(error, InsufficientCredits)
+    assert not error.retryable
+
+
+def test_an_ordinary_429_is_still_a_retryable_rate_limit() -> None:
+    error = classify_http_error(
+        http(429, json={"error": {"message": "slow down", "code": "rate_limit_exceeded"}}),
+        provider="openai", quirks=DEFAULT,
+    )
+    assert error.retryable
+

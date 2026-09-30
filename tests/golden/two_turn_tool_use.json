@@ -1,0 +1,55 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "shout hi",
+          "citations": []
+        }
+      ],
+      "origin": null
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_call",
+          "id": "c1",
+          "tool_name": "shout",
+          "arguments": {
+            "text": "hi"
+          },
+          "raw_arguments": null,
+          "parse_error": null
+        }
+      ],
+      "origin": null
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "call_id": "c1",
+          "tool_name": "shout",
+          "content": "HI",
+          "is_error": false
+        }
+      ],
+      "origin": null
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "It says HI.",
+          "citations": []
+        }
+      ],
+      "origin": null
+    }
+  ]
+}

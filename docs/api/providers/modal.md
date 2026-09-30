@@ -1,7 +1,7 @@
 # `agentloop.providers.modal`
 
 Adapter for a self-deployed vLLM OpenAI-compatible endpoint on Modal. Requires
-`agentloop[openai-compat]`.
+`based-models-agentloop[openai-compat]`.
 
 ## Constants
 

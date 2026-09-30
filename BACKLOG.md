@@ -2,41 +2,212 @@
 
 Work that was deliberately deferred, with enough context to pick it up cold.
 
-## OpenRouter reasoning replay
+## Documentation for agentloop 0.2 (hosted tools, Responses, `Origin`)
 
-**Status:** not implemented. The `Quirks.replays_reasoning` flag was removed from
-`src/agentloop/providers/_openai_compat.py` because nothing read it. OpenRouter's builder
-set it to `True`, but the shared adapter never parsed reasoning or sent it back, so the
-setting was misleading.
+**Status:** not done. The 0.2 code landed without doc changes; `docs/` still describes
+0.1. Everything below is user-facing behaviour that changed or is new. The design
+rationale is in `~/projects/agentloop-tools/DESIGN.md`; lift from it, don't restate it.
 
-**What was promised:** `tutorial/05-openai-compatible.md`, in the `replays_reasoning`
-section, says OpenRouter replays reasoning, but only when `ThinkingPart.provider` and
-`.model` are unchanged, and that Modal does not. `tutorial/DIVERGENCES.md` and the
-chapter 5 code listings still show the flag. Update them when this lands, or drop the
-promise.
+**Stale pages (wrong today):**
 
-**What implementing it takes:**
+- `docs/api/agentloop.md`: `__version__` is `"0.2.0"`. New exports: `HostedTool`,
+  `HostedToolPart`, `Source`, `Citation`, `Origin`, `join_text`.
+- `docs/api/transcript.md` also: `final_text()` now joins text parts with `join_text`, which
+  adds a space between separate blocks but not across Anthropic's citation splits or
+  before closing punctuation. It used to concatenate with no separator.
+- `docs/api/providers/openai.md`: `build_openai_client(..., api="responses")` is new, and
+  Responses is now the default. `api="completions"` keeps Chat Completions. The returned
+  client gains `api` and `hosted_tools`. `QUIRKS`' `max_completion_tokens` applies to
+  Completions only (Responses sends `max_output_tokens`).
+- `docs/api/providers/openrouter.md`, `modal.md`: `OpenAICompatClient(..., api=...)`,
+  `api="completions"` for both, `hosted_tools` empty. OpenRouter now replays
+  `reasoning_details` (see `Origin` below).
+- `docs/api/providers/anthropic.md`:
+  - `HOSTED_TOOLS`, `API = "messages"`;
+  - `WEB_SEARCH_BASIC` (`web_search_20250305`, the DEFAULT) / `WEB_SEARCH_FILTERED`
+    (`web_search_20260209`, only when the option `dynamic_filtering` is `True`);
+  - `hosted_tool_to_wire`;
+  - `pause_turn` maps to `PAUSED` (no longer `UNKNOWN`);
+  - assistant turns replay from `origin.raw`.
+- `docs/api/provider.md`:
+  - `StopReason.PAUSED`;
+  - `HostedTool`;
+  - `ModelRequest.hosted_tools`, `ModelResponse.origin`;
+  - `supported_hosted_tools(client)`;
+  - the optional `hosted_tools` attribute a client may expose.
+- `docs/api/transcript.md`:
+  - `ContentPart` now includes `HostedToolPart`;
+  - `TextPart.citations`; `Source`, `Citation`, `Origin`;
+  - `Message.origin`;
+  - `add_assistant_message(parts, origin=None)` and `extend_last_assistant`;
+  - the new `check_invariants` rule (hosted parts only in assistant messages).
+- `docs/api/agent.md`: `Agent(tools: Sequence[ToolSpec | HostedTool])`. Construction raises
+  `ConfigurationError` for a hosted tool the client cannot run, and for a `ToolSpec` named
+  like a hosted tool.
+- `docs/api/loop.md`: `run_conversation(..., hosted_tools=())`, and the PAUSED
+  continuation (no user message; it joins the same assistant turn; counts as an iteration).
+- `docs/api/config.md`, `docs/getting-started/configuration.md`: `OPENAI_API`
+  (`responses` | `completions`, default `responses`) and `Settings.openai_api`.
+- `docs/api/tracing.md`: the `agentloop.hosted_tool.calls` span attribute (a count only).
+- `docs/api/errors.md`, `docs/guides/retries-and-errors.md`: an OpenAI 429 whose error
+  `type`/`code` is `insufficient_quota`/`credit_balance_exhausted` is now
+  `InsufficientCredits` (not retried), not `RateLimited`.
+- `docs/guides/custom-providers.md`: `StopReason.PAUSED`. Optionally, how a custom client
+  opts into hosted tools (`hosted_tools` attribute) and exact replay (`ModelResponse.origin`).
 
-1. **Parse.** In `_openai_compat._normalize`, read `message["reasoning"]` (text) and
-   `message["reasoning_details"]` (a list of blocks) into `ThinkingPart`s. Set `provider`
-   and `model`, and keep the original block verbatim in `raw`. The parts must come before
-   the text and tool calls, in the order received.
-2. **Replay.** In `message_to_wire`, for an assistant message, re-emit `reasoning_details`
-   from the `raw` blocks, byte for byte, in their original order. OpenRouter's docs forbid
-   reordering or modifying them. Replay only when the part's `provider` and `model` match
-   the current request's. Otherwise drop the part, because a different model cannot use it.
-3. **Gate.** Reintroduce a quirk flag, so Modal/vLLM never replays: vLLM's
-   `reasoning_content` is generally not replayable, and most chat templates discard it.
-   The OpenRouter builder turns the flag on.
-4. **Usage.** `completion_tokens_details.reasoning_tokens` is already mapped. Nothing to do.
-5. **Tests.**
-   - A body with `reasoning_details` round-trips through
-     `response_from_wire` → `message_to_wire` unchanged.
-   - A part from a different model is dropped on replay.
-   - Modal quirks never emit reasoning.
+**New content needed:**
 
-**Why it was deferred:** the `src/agentloop` review (September 2026) fixed defects first.
-This is a feature, not a fix.
+- `docs/guides/providers.md`: Chat Completions vs Responses. What differs, which
+  providers speak which, why Responses runs **stateless** (`store: false`, full transcript
+  resent, item ids stripped on replay), and how to switch (`OPENAI_API`).
+- A **hosted tools / web search** guide:
+  - `native_web_search(...)` from agentloop-tools, with its options and each provider's
+    handling (OpenAI `search_context_size`; Anthropic `dynamic_filtering`, see below);
+  - the option policy (unknown and restriction options raise; tuning is logged);
+  - **Sources vs citations: the two evidence readers mean different things.** Say so
+    plainly, with a table:
+
+    | | `sources(transcript)` | `citations(transcript)` |
+    |---|---|---|
+    | What it is | Every page the provider's search returned (`Source(url, title)`), deduplicated | A claim in the model's text tied to a page (`Citation`) |
+    | Comes from | `HostedToolPart.sources` (search result blocks / `web_search_call.action.sources`) | `TextPart.citations` |
+    | Anthropic, basic search (default) | Filled | Filled, with `cited_text` (the quoted source text) |
+    | Anthropic, `dynamic_filtering=True` | Filled | **Always empty** (see below) |
+    | OpenAI Responses | Filled (requires the `include` agentloop sends) | Filled, with `start`/`end` (a span of the answer), no `cited_text` |
+    | Use it for | "What did it look at?" A reading list, an audit trail | "Where did this sentence come from?" Footnotes, fact-checking |
+
+    A source is not evidence that the answer used the page; a citation is. Neither is
+    readable page text: Anthropic encrypts result content, and OpenAI returns only URLs.
+  - **The `dynamic_filtering` flag (Anthropic only; default `False`).** Explain what it
+    does, and the trade-off:
+    - *What it does:* `True` sends `web_search_20260209`. Claude writes and runs a Python
+      program (in an auto-provisioned code-execution sandbox) that calls the search,
+      filters the results, and prints what it keeps. Claude reads only that printed
+      output. `False` (the default) sends `web_search_20250305`: results go straight
+      into the model's context as search-result blocks.
+    - *Why citations vanish when it is on:* a citation must point at a search-result
+      block in the model's context, and with filtering on the results go to the program,
+      not the model. Measured live (Sept 2026, `claude-opus-5`, 2 questions × 3 variants):
+      filtering on gave 0 citations in every response; basic search gave 2–3;
+      `web_search_20260209` with `allowed_callers: ["direct"]` (new version, no code in
+      the path) gave 2–5. It is the code path, not the tool version. The answer text still
+      arrives split where citations would sit, each block with `citations: []`, and the
+      model writes a "Sources:" list in prose instead. Show one example response of each
+      (use the frozen captures in `agentloop-tools/experiments/examples/citations/`,
+      described in the README there, e.g. `shannon_A_dynamic.json` against
+      `shannon_B_basic.json`. The whole `experiments/` folder is gitignored, so these
+      exist only on the machine that ran the experiment. On a fresh clone, rerun
+      `experiments/citations_experiment.py` first (it writes to
+      `experiments/citation_runs/`; 6 requests, a few cents).
+    - *Cost:* dynamic filtering did NOT save tokens on single, simple searches (input
+      13,300 vs 12,827). Anthropic pitches it for search-heavy requests; recommend it
+      only there, when citations are not needed.
+    - *Constraints when on:* Claude 4.6+ only; not ZDR-eligible (code execution);
+      response carries extra `server_tool_use` / `code_execution_tool_result` blocks
+      (kept in `origin.raw`, surfaced as a `HostedToolPart` of kind `code_execution`).
+    - *OpenAI:* has no such option; setting `dynamic_filtering=True` logs a warning and
+      is ignored.
+    - *Changelog note:* the default was `True` before this landed and was flipped to
+      `False` because it silently disabled citations.
+  - approval being per request, not per search;
+  - native vs client search as separate choices.
+  - **Domain policy (`agentloop_tools.web.DomainPolicy`).** A blocklist or allowlist
+    that does two things, prevent and report, and deliberately nothing else:
+    - *Modes:* `DomainPolicy.block([...])` or `DomainPolicy.allow([...])`, one or the
+      other, as both providers require.
+    - *Matching:* a rule covers its host and every subdomain but not a longer label
+      (`europa.eu` covers `eur-lex.europa.eu`, not `noteuropa.eu`), plus an optional path
+      prefix where `*` matches within the path. The same rules as the providers.
+    - *Prevent:* `policy.native_web_search(**options)` sends the list to the provider:
+      `blocked_domains` / `allowed_domains` on Anthropic, `filters.*` on OpenAI.
+      Passing a domain option there as well is an error (one source of truth).
+    - *Report:* `policy.audit(transcript, since=n)` returns `Violation(url, where,
+      message_index, rule)` for every place an assistant turn reached a domain the policy
+      does not permit. `where` is `"source"` (the provider filter leaked), `"citation"`
+      or `"text"`. `rule` is the matched blocklist entry, or `None` for "not on the
+      allowlist". To audit one turn, pass `since=len(transcript.messages)` taken before
+      `converse`.
+    - *Text scanning boundaries:* full URLs in both modes (markdown links included, and
+      balanced parentheses kept, e.g. Wikipedia's `.../Python_(programming_language)`).
+      Bare host mentions ("see wikipedia.org") in block mode only. Allow mode checks full
+      URLs only, because a generic host pattern would flag `config.py`.
+    - *The hard limit, stated plainly:* with native search the model reads the results
+      inside the provider's response, so no library can stop it READING a page. The
+      policy prevents what the provider can and reports the rest. The only true pre-model
+      filter is client-side search (backlogged).
+    - *What it does NOT do:* no hiding, no redaction, no transcript edits, no retry or
+      raise. Handling a violation (log, raise, re-ask, warn the user) is the developer's
+      choice. Show one example of each.
+    - *Live evidence (Sept 2026), for the examples:*
+      - `block(["wikipedia.org"])` held on both providers (0 leaked sources out of 10 and
+        31);
+      - asked for Wikipedia's URL, Claude wrote 4 Wikipedia links from its own knowledge,
+        which the audit reported as `"text"` violations;
+      - `allow(["python.org"])` on OpenAI returned 27 sources, all on-list.
+- `docs/guides/conversations.md` / `transcript-storage.md`: what `Message.origin` is, why
+  it can be large (encrypted search results), and that JSONL keeps it so a resumed
+  conversation replays exactly.
+- `agentloop-tools` has no user docs beyond `DESIGN.md`: a README with install and a
+  `native_web_search` example.
+
+**Verify while writing:** each example runs. The behaviour itself was verified live
+against all three providers; see "Live verification" in `agentloop-tools/DESIGN.md` for
+what was confirmed (and the one thing, `pause_turn`, that was not triggered).
+
+**Why it was deferred:** the code was reviewed and live-tested first (September 2026);
+docs were split out on request.
+
+## Client-side web search (agentloop-tools)
+
+**Status:** not implemented. Native search (the provider runs it) shipped in agentloop 0.2
+as `HostedTool` + `agentloop_tools.native_web_search`. Client-side search is the OTHER
+first-class option, chosen explicitly by the developer and never a fallback for native:
+the app's own code calls a search API, so it works on every provider (OpenRouter, Modal,
+Completions), results are visible and loggable, and each call goes through `before_tool`.
+
+**What implementing it takes** (all in `agentloop-tools`, a `[web]` extra pulling httpx):
+
+1. `web_search(backend, *, http, name="web_search", allowed_domains=(),
+   blocked_domains=(), max_results=5) -> ToolSpec`. Strict schema `{query, max_results}`;
+   numbered hits (`[n] title / url / snippet`); domain filters applied to the hits, with the
+   same semantics as native; a backend failure raises `ToolError`. `name=` lets it sit
+   beside hosted `web_search` on Anthropic (`Agent` rejects the clash otherwise).
+   **Take a `policy: DomainPolicy | None` and drop every hit where
+   `policy.permits(hit.url)` is false BEFORE formatting the result.** This is the one
+   place a blocklist or allowlist becomes a guarantee: the model never sees the page.
+   (`DomainPolicy` already exists in `agentloop_tools.web`; reuse its matching, don't
+   re-implement it.)
+2. `SearchBackend` protocol + `SearchHit(title, url, snippet, published)`, with one
+   concrete backend (choice open: Brave, Tavily, Exa). It receives the app's
+   `httpx.Client` and API key and never reads the environment.
+3. `web_fetch(http, *, max_bytes, allowed_domains=()) -> ToolSpec`: http(s) only; an SSRF
+   guard (refuse loopback, private, link-local and cloud-metadata addresses AFTER DNS
+   resolution); a content-type check; stdlib `html.parser` HTML to text; paging with
+   `offset` and a "N more lines; use offset=..." hint; a byte cap.
+4. `_text.py`: shared line numbering, truncation hints, byte cap, `errors="replace"`
+   decoding. The coding family will need the same.
+5. Tests: `httpx.MockTransport` only; strict-dialect schemas; handlers total through
+   `run_tools`; the SSRF guard against `127.0.0.1`, `169.254.169.254` and a DNS name that
+   resolves privately.
+
+**Why it was deferred:** native search came first (September 2026); client search is
+independent of it.
+
+## Web search over Chat Completions (`gpt-5-search-api`)
+
+**Status:** not implemented. The Completions codec refuses `hosted_tools` with a
+`BadRequestError` pointing at `api="responses"`. Chat Completions has no hosted tools;
+OpenAI's search there is a dedicated model (`gpt-5-search-api`) driven by a
+`web_search_options` request field, with `url_citation` annotations on the message.
+
+**What implementing it takes:** map `HostedTool("web_search")` to `web_search_options`
+(`user_location`, `search_context_size`) when the configured model is a search model;
+parse `message.annotations` into `TextPart.citations`; set the Completions codec's
+`hosted_tools` per model rather than per codec. Domain filters have no Completions
+equivalent, so they must raise (a dropped restriction widens access).
+
+**Why it was deferred:** Responses is OpenAI's current API and supports search on its
+general models; this path only matters for a Completions-only deployment.
 
 ## Model-aware provider `Quirks`
 
@@ -229,3 +400,8 @@ genuine async twin:
 
 Additive, not a rewrite — the real cost is item 9, doubling the provider and loop test
 surface.
+
+## Distribution follow-ups
+
+- `agent-loop-tools` must switch its requirement to `based-models-agentloop[...] @ git+ssh://git@github.com/based-models/agent-loop.git@<sha>` (dist renamed from `agentloop`; import name unchanged) and add a hashed lockfile for the PyPI deps, installing the package itself in a second `--no-deps` step (pip cannot hash a git URL).
+- Recorded wire-body fixtures (`tests/fixtures/`) were not added: the adapters' inline tests already cover the known quirks. Add real captures as they are found.

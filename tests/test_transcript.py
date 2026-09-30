@@ -3,12 +3,17 @@ from pydantic import ValidationError
 
 from agentloop.errors import TranscriptError
 from agentloop.transcript import (
+    Citation,
+    HostedToolPart,
     Message,
+    Origin,
+    Source,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolResultPart,
     Transcript,
+    final_text,
     from_jsonl,
     to_jsonl,
 )
@@ -301,3 +306,85 @@ def test_a_well_formed_transcript_still_passes() -> None:
     transcript.add_tool_results([_result("c2"), _result("c1")])
     transcript.add_assistant_message([TextPart(text="done")])
     transcript.check_invariants()
+
+
+# --- provider-hosted activity and origins ---
+
+ORIGIN = Origin(provider="anthropic", api="messages", model="c",
+                raw=({"type": "server_tool_use", "id": "s1"},))
+
+
+def test_origin_hosted_parts_and_citations_survive_jsonl() -> None:
+    transcript = Transcript()
+    transcript.add_user_message("search")
+    transcript.add_assistant_message(
+        [HostedToolPart(kind="web_search", call_id="s1", query="q",
+                        sources=(Source(url="https://a.test", title="A"),)),
+         TextPart(text="Answer.", citations=(Citation(url="https://a.test", cited_text="x"),))],
+        origin=ORIGIN,
+    )
+    restored = from_jsonl(to_jsonl(transcript.messages).splitlines())
+    assert restored == transcript
+    restored.check_invariants()                      # hosted parts need no result
+
+
+def test_a_hosted_part_outside_an_assistant_message_is_rejected() -> None:
+    transcript = Transcript(messages=[
+        Message(role="user", content=(HostedToolPart(kind="web_search"),)),
+    ])
+    with pytest.raises(TranscriptError, match="provider-hosted"):
+        transcript.check_invariants()
+
+
+def test_extending_a_paused_turn_joins_parts_and_raw() -> None:
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    transcript.add_assistant_message([TextPart(text="a")], origin=ORIGIN)
+    more = ORIGIN.model_copy(update={"raw": ({"type": "text", "text": "b"},)})
+    transcript.extend_last_assistant([TextPart(text="b")], more)
+    [_, turn] = transcript.messages
+    assert [p.text for p in turn.content if isinstance(p, TextPart)] == ["a", "b"]
+    assert turn.origin is not None and len(turn.origin.raw) == 2
+
+
+def test_only_an_assistant_turn_can_be_extended() -> None:
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    with pytest.raises(TranscriptError, match="no assistant message"):
+        transcript.extend_last_assistant([TextPart(text="x")])
+
+
+# --- joining text parts ---
+
+
+def _text_message(*texts: str) -> Transcript:
+    transcript = Transcript()
+    transcript.add_user_message("q")
+    transcript.add_assistant_message([TextPart(text=t) for t in texts])
+    return transcript
+
+
+def test_separate_blocks_are_joined_with_a_space() -> None:
+    """Seen live: "I'll search for that." + "The latest ..." ran together."""
+    transcript = _text_message("I'll search for that.", "The latest release is 3.14.7.")
+    assert final_text(transcript) == "I'll search for that. The latest release is 3.14.7."
+
+
+def test_blocks_that_carry_their_own_spacing_are_not_doubled() -> None:
+    """Anthropic splits one sentence at each citation, keeping the spaces."""
+    transcript = _text_message("Based on the results, ", "Shannon was born in 1916", ".")
+    assert final_text(transcript) == "Based on the results, Shannon was born in 1916."
+
+
+def test_no_space_before_closing_punctuation_or_after_an_opening_bracket() -> None:
+    transcript = _text_message("It was released (", "in 1991", "), per python.org", "!")
+    assert final_text(transcript) == "It was released (in 1991), per python.org!"
+
+
+def test_newlines_count_as_whitespace_and_empty_blocks_vanish() -> None:
+    assert final_text(_text_message("Line one\n", "", "Line two")) == "Line one\nLine two"
+
+
+def test_a_single_block_is_unchanged() -> None:
+    assert final_text(_text_message("  exactly as sent  ")) == "  exactly as sent  "
+
