@@ -1,4 +1,4 @@
-"""The ergonomic layer: everything chapter 9 made you write by hand.
+"""The ergonomic layer: the wiring you would otherwise write by hand.
 
 Strictly additive. Nothing in tooling.py or loop.py changes to support any of
 it -- which is the test of whether the primitives underneath were right.
@@ -44,10 +44,10 @@ def _make_handler(fn: Callable[..., Any]) -> Handler:
     """Wrap `fn` so it can be called as `handler(deps, **arguments)`.
 
     The wrapper advertises the ORIGINAL parameters with `deps` prepended, so
-    chapter 6's argument dry run still validates the model's arguments against
-    the real function. A generic (deps, *args, **kwargs) signature would accept
+    the argument dry run in the tool executor still validates the model's
+    arguments against the real function. A generic (deps, *args, **kwargs) signature would accept
     anything, and every bad call from the model would be demoted from a clean
-    "Invalid arguments" result to a logged exception. See chapter 10, Part 4.2.
+    "Invalid arguments" result to a logged exception.
 
     functools.wraps does NOT do this: it sets __wrapped__, which
     inspect.signature follows, giving back a signature with no deps at all.
@@ -77,7 +77,8 @@ def tool(
     """Turn a plain function into a ToolSpec.
 
     `parameters` is REQUIRED and hand-written. This decorator will not generate
-    a JSON Schema for you -- see chapter 10, Part 4.5, and divergence D7.
+    a JSON Schema for you: a schema inferred from annotations drifts silently from
+    what the model is told, so the one the model sees is always the one you wrote.
 
     The decorated function does not take `deps`. If it wants one, it declares a
     keyword-only `deps` parameter; either way `deps` is stripped from the
@@ -110,8 +111,8 @@ def _with_tracing(
     The import is LAZY on purpose. agent.py is imported by __init__.py, so a
     module-scope `from agentloop.tracing import OTelObserver` here would mean
     every `import agentloop` loads OpenTelemetry -- including for the consumers
-    who will never trace anything. Chapter 11, Part 3.1 has the argument;
-    chapter 13 asserts it against the installed wheel.
+    who will never trace anything. The wheel check in scripts/test-wheel.sh
+    asserts this against the installed package.
     """
     from agentloop.observer import MultiObserver
     from agentloop.tracing import OTelObserver
@@ -178,7 +179,8 @@ class Agent:
         """Build the configured provider's client from an environment mapping.
 
         YOU supply the mapping -- `Agent.from_env(os.environ, ...)`. There is no
-        default, deliberately: see chapter 10, Part 5.1.
+        default, deliberately: a library that reads the process environment on its
+        own surprises everyone who depends on it.
         """
         from agentloop.config import Settings, build_client
 

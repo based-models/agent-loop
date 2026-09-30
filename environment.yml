@@ -8,7 +8,6 @@ dependencies:
       # Everything else comes from pyproject.toml. Editable, so your source
       # changes take effect without reinstalling.
       #
-      # One environment per repository. Chapter 13's `harness` repo gets its own,
-      # which is the split made physical: an environment holding both packages
-      # can no longer tell you whether the library stands on its own.
+      # One environment per repository: a shared one can no longer tell you whether
+      # this library stands on its own.
       - -e .[all,dev]

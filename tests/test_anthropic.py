@@ -72,7 +72,7 @@ def test_max_tokens_is_always_sent() -> None:
 
 
 def test_temperature_is_never_forwarded() -> None:
-    # chapter 3's experiment: the SDK has no such parameter, and the server 400s
+    # the SDK has no such parameter, and the server 400s
     assert "temperature" not in wire(temperature=0.5)
 
 
@@ -86,7 +86,7 @@ def test_strict_is_top_level_on_the_tool() -> None:
     tool = tool_to_wire(
         ToolSchema(name="read", description="Read a file.", parameters=EMPTY_SCHEMA)
     )
-    assert tool["strict"] is True            # cf. chapter 5, where it is nested
+    assert tool["strict"] is True            # (OpenAI-compatible nests it inside `function`)
     assert tool["input_schema"] == EMPTY_SCHEMA
 
 

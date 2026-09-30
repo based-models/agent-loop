@@ -20,7 +20,7 @@ def test_an_unknown_provider_is_rejected_by_name() -> None:
 
 
 def test_an_empty_key_reads_as_unset() -> None:
-    # so the Anthropic SDK's credential chain still works (chapter 4)
+    # so the Anthropic SDK's credential chain still works
     assert settings(anthropic_api_key="").anthropic_api_key is None
 
 

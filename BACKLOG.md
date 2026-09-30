@@ -5,8 +5,7 @@ Work that was deliberately deferred, with enough context to pick it up cold.
 ## Documentation for agentloop 0.2 (hosted tools, Responses, `Origin`)
 
 **Status:** not done. The 0.2 code landed without doc changes; `docs/` still describes
-0.1. Everything below is user-facing behaviour that changed or is new. The design
-rationale is in `~/projects/agentloop-tools/DESIGN.md`; lift from it, don't restate it.
+0.1. Everything below is user-facing behaviour that changed or is new.
 
 **Stale pages (wrong today):**
 
@@ -147,11 +146,11 @@ rationale is in `~/projects/agentloop-tools/DESIGN.md`; lift from it, don't rest
 - `docs/guides/conversations.md` / `transcript-storage.md`: what `Message.origin` is, why
   it can be large (encrypted search results), and that JSONL keeps it so a resumed
   conversation replays exactly.
-- `agentloop-tools` has no user docs beyond `DESIGN.md`: a README with install and a
-  `native_web_search` example.
+- `based-models-agentloop-tools` needs a README with install and a `native_web_search`
+  example.
 
 **Verify while writing:** each example runs. The behaviour itself was verified live
-against all three providers; see "Live verification" in `agentloop-tools/DESIGN.md` for
+against all three providers; see "Live verification" in that package's design notes for
 what was confirmed (and the one thing, `pause_turn`, that was not triggered).
 
 **Why it was deferred:** the code was reviewed and live-tested first (September 2026);
@@ -314,8 +313,7 @@ package supports — not something to guess at without dedicated testing.
 ## `trace=True` without `configure_tracing()` silently discards every span
 
 **Status:** not implemented (documented gap, not patched). Correct and deliberate — the
-library never touches global tracing state on its own (`tutorial/DIVERGENCES.md` D14, now
-gitignored but recoverable from git history) — but a first-time consumer who sets
+library never touches global tracing state on its own — but a first-time consumer who sets
 `Agent(..., trace=True)` and sees no spans anywhere has no signal that a second,
 separately-named call (`agentloop.tracing.configure_tracing(endpoint)`) was required.
 
@@ -327,35 +325,12 @@ on the same reliable-detection question as the item above — solve both togethe
 **Why it was deferred:** shares its blocker with "`configure_tracing()` silently no-ops
 on a second call"; solve the detection question once, apply it to both.
 
-## `providers/fake.py` (`FakeClient`) was never built
-
-**Status:** not implemented, and it breaks `scripts/test-wheel.sh`. `tests/test_loop.py`'s
-`ScriptedClient` docstring says "chapter 11 promotes this to
-`agentloop.providers.fake.FakeClient`," and `scripts/test-wheel.sh` already imports
-`from agentloop.providers.fake import FakeClient` in its bare-install smoke test — but no
-`src/agentloop/providers/fake.py` exists. Running `scripts/test-wheel.sh` today fails at
-that import with `ModuleNotFoundError: No module named 'agentloop.providers.fake'`,
-before it can check anything the script was written to check (discovered while verifying
-the September 2026 review's httpx-import fix, which otherwise had to be confirmed by
-hand-running the script's one relevant check in isolation instead of end to end).
-
-**What implementing it takes:** promote `tests/test_loop.py`'s `ScriptedClient` into a
-real `LLMClient` implementation at `src/agentloop/providers/fake.py` — takes canned
-`ModelResponse`s, replays them in order, records requests, satisfies the same protocol
-`AnthropicClient`/`OpenAICompatClient` do. `ScriptedClient` is a ready-made reference for
-the shape.
-
-**Why it was deferred:** a new module, not a fix to an existing one — matches the
-project's "writing a chapter's module for the first time is the learning" convention
-rather than something to add unprompted during a review.
-
 ## `async` support (`AsyncLLMClient`, `Agent.arun()`)
 
 **Status:** not implemented. Every provider client (`AnthropicClient`,
 `OpenAICompatClient`) blocks on a sync SDK/`httpx.Client` call; `run_conversation`
-(`loop.py`) and `run_tools` (`tooling.py`) are entirely synchronous, matching
-`tutorial/DIVERGENCES.md` D11 ("one sync path; parallelism only via
-`ThreadPoolExecutor`").
+(`loop.py`) and `run_tools` (`tooling.py`) are entirely synchronous, by design: one
+sync path, with parallelism only via `ThreadPoolExecutor`.
 
 **Why deferred instead of built:** `client.complete()` spends its time blocked on a
 socket, and both the `anthropic` SDK and `httpx.Client` release the GIL while waiting —
@@ -401,7 +376,8 @@ genuine async twin:
 Additive, not a rewrite — the real cost is item 9, doubling the provider and loop test
 surface.
 
-## Distribution follow-ups
+## Recorded wire-body fixtures
 
-- `agent-loop-tools` must switch its requirement to `based-models-agentloop[...] @ git+ssh://git@github.com/based-models/agent-loop.git@<sha>` (dist renamed from `agentloop`; import name unchanged) and add a hashed lockfile for the PyPI deps, installing the package itself in a second `--no-deps` step (pip cannot hash a git URL).
-- Recorded wire-body fixtures (`tests/fixtures/`) were not added: the adapters' inline tests already cover the known quirks. Add real captures as they are found.
+`tests/fixtures/` was not added: the adapters' inline tests already cover the known
+quirks. Add real captured response bodies (error-in-200, plain-text 401, missing usage
+details) as they are found.

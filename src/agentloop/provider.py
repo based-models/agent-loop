@@ -132,7 +132,7 @@ class LLMClient(Protocol):
 
     def complete(self, request: ModelRequest) -> ModelResponse: ...
 
-    # Reserved for chapter 12. Note: a SYNC iterator — streaming needs no asyncio.
+    # Reserved for streaming. Note: a SYNC iterator — streaming needs no asyncio.
     # def complete_stream(self, request: ModelRequest) -> Iterator[StreamEvent]: ...
 
 

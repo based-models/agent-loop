@@ -33,7 +33,7 @@ def echo_tz(timezone: str | None) -> str:
 
 @tool(parameters=SCHEMA)
 def with_default(timezone: str | None = None) -> str:
-    """The shape that silently swallowed the deps bundle before this chapter."""
+    """The shape that silently swallowed the deps bundle."""
     return f"tz={timezone!r}"
 
 
@@ -89,8 +89,8 @@ def test_bad_arguments_are_a_clean_result_not_a_logged_exception(
     """The test the naive wrapper fails.
 
     A (deps, *args, **kwargs) signature accepts anything, so bind() cannot fail,
-    the TypeError happens inside the call, and chapter 6's case (3) is demoted to
-    a logged traceback. Both assertions matter; the second is the one that bites.
+    the TypeError happens inside the call, and the clean "Invalid arguments" result
+    is demoted to a logged traceback. Both assertions matter; the second is the one that bites.
     """
     with caplog.at_level(logging.ERROR):
         result = run(echo_tz, nonsense=1)
@@ -113,7 +113,7 @@ def test_the_advertised_signature_keeps_the_real_parameters() -> None:
 
 
 def test_a_defaulted_parameter_no_longer_swallows_deps() -> None:
-    """Before this chapter, bind(deps) put the deps bundle in `timezone`."""
+    """A naive bind(deps) would put the deps bundle in `timezone`."""
     assert run(with_default).content == "tz=None"
 
 
@@ -178,7 +178,7 @@ def test_final_text_is_empty_when_nothing_was_said() -> None:
 
 
 def test_importing_agentloop_pulls_in_no_provider_sdk() -> None:
-    """The re-exports must not undo chapter 9's lazy imports."""
+    """The re-exports must not undo the lazy provider imports."""
     import subprocess
     import sys
 

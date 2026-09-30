@@ -3,7 +3,7 @@
 Install the tracing extra, configure an exporter, and enable tracing on the agent:
 
 ```bash
-pip install 'based-models-agentloop[otel] @ git+ssh://git@github.com/based-models/agent-loop.git@<sha>'
+pip install 'based-models-agentloop[otel]'
 ```
 
 ```python

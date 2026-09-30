@@ -49,7 +49,7 @@ class ToolDeps(Protocol):
     A read-only property rather than a bare attribute, for two reasons. It is the
     honest declaration — `run_tools` reads this hook and never assigns to it — and
     a bare protocol variable would demand a settable attribute, which a
-    Callable-typed field on a pydantic BaseModel is not. See chapter 6, Part 4.2.
+    Callable-typed field on a pydantic BaseModel is not.
     """
 
     @property
@@ -156,7 +156,7 @@ def _execute(call: ToolCallPart, registry: Registry, deps: ToolDeps) -> ToolResu
         content = str(result)  # inside the guard: __str__ is someone else's code too
     except ToolError as exc:
         return fail(f"Error: {exc}")
-    except Exception as exc:  # noqa: BLE001 - totality is the invariant; see chapter 6
+    except Exception as exc:  # noqa: BLE001 - totality is the invariant: every call gets exactly one result
         logger.exception("tool %s raised", call.tool_name)
         return fail(f"Error: {type(exc).__name__}: {exc}")
     return ToolResultPart(call_id=call.id, tool_name=call.tool_name, content=content)

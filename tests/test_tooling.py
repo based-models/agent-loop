@@ -197,11 +197,11 @@ def test_a_deps_bundle_needs_nothing_but_the_hook() -> None:
 
 
 def test_the_library_does_not_know_what_a_shell_is() -> None:
-    """A three-line preview of chapter 12's layering test, on this module alone.
+    """A preview of the layering test in test_layering.py, on this module alone.
 
-    It is here rather than only there because THIS is the chapter where the
-    temptation lives: `bash` is forty lines and it would fit right below
-    `run_tools`. Put the fence up in the same commit as the field.
+    It is here as well because this is where the temptation lives: `bash` is forty
+    lines and it would fit right below `run_tools`.
+    Put the fence up in the same commit as the field.
     """
     source = (Path(__file__).parent.parent / "src" / "agentloop" / "tooling.py")
     roots = {
@@ -214,9 +214,9 @@ def test_the_library_does_not_know_what_a_shell_is() -> None:
         for node in ast.walk(ast.parse(source.read_text()))
         if isinstance(node, ast.ImportFrom) and node.module
     }
-    assert not (roots & {"subprocess", "os", "shutil", "harness"}), (
-        f"tooling.py imports {sorted(roots & {'subprocess', 'os', 'shutil', 'harness'})}. "
-        "Running commands and touching files is the application's job — chapter 7."
+    assert not (roots & {"subprocess", "os", "shutil"}), (
+        f"tooling.py imports {sorted(roots & {'subprocess', 'os', 'shutil'})}. "
+        "Running commands and touching files is the application's job."
     )
 
 

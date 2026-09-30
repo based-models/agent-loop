@@ -1,64 +1,32 @@
 # Installing
 
-based-models-agentloop is private. It is installed straight from its GitHub repository and
-is never uploaded to PyPI or any other index.
+```bash
+pip install 'based-models-agentloop[anthropic]'
+```
 
-## Why not an index
+The distribution name is `based-models-agentloop`; the import name is `agentloop`. (The
+bare name `agentloop` on PyPI is an unrelated project. Do not install it by mistake.)
 
-The name `agentloop` on public PyPI belongs to an unrelated project. With an index in the
-picture, `pip` can pick that one (highest version wins) instead of ours: a dependency
-confusion attack, without anyone attacking. A direct URL reference removes the index from
-the decision entirely, and the distribution name `based-models-agentloop` means a mistyped
-bare `pip install` finds nothing of ours to confuse.
+## Extras
 
-## Install
+`anthropic`, `openai-compat` (OpenAI, OpenRouter, Modal), `otel` (OpenTelemetry SDK and OTLP
+exporter) and `all`. Extras are genuinely optional: a missing one fails with an error that
+names the extra to install.
 
-Pin an immutable **commit SHA**. Tags can be moved; a SHA cannot.
+## Pinning
+
+Pin a compatible range in your own project. While the version is `0.x`, a minor release can
+change the public API:
 
 ```text
-# requirements.txt
-based-models-agentloop[anthropic] @ git+ssh://git@github.com/based-models/agent-loop.git@<commit-sha>
+based-models-agentloop[anthropic]>=0.4,<0.5
 ```
 
-Releases are tagged `vX.Y.Z`; find the SHA with `git rev-parse vX.Y.Z^{commit}`.
+For reproducible and tamper-evident installs, compile a hashed lockfile
+(`pip-compile --generate-hashes`) and install with `pip install --require-hashes`.
 
-## What is and is not protected
+## Verifying a release
 
-- The direct reference is protected. Its **transitive** dependencies (pydantic, anthropic,
-  ...) still resolve from PyPI, which is normal and fine.
-- To pin those too, compile a hashed lockfile in the consuming project (leave
-  `based-models-agentloop` out of `requirements.in`; pip cannot hash a git checkout) and
-  install in two steps:
-
-  ```bash
-  pip-compile --generate-hashes requirements.in -o requirements.lock
-  pip install --require-hashes -r requirements.lock
-  pip install --no-deps 'based-models-agentloop[anthropic] @ git+ssh://git@github.com/based-models/agent-loop.git@<commit-sha>'
-  ```
-
-  For a content hash on our own package too, install the release wheel instead (below).
-- The `Private :: Do Not Upload` classifier makes PyPI reject an accidental upload.
-
-## Authentication
-
-- Locally: your SSH key.
-- In CI: a read-only **deploy key** on `based-models/agent-loop`, loaded with an SSH agent
-  action, or a fine-grained read-only token supplied through git config. Never embed a
-  token in the URL that is committed to a requirements file.
-
-```yaml
-- uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387  # v0.9.0
-  with:
-    ssh-private-key: ${{ secrets.AGENT_LOOP_DEPLOY_KEY }}
-- run: pip install -r requirements.txt
-```
-
-## Install from a release wheel
-
-Each GitHub Release carries the wheel, the sdist and `SHA256SUMS`:
-
-```bash
-gh release download v0.3.0 -R based-models/agent-loop -p '*.whl' -p SHA256SUMS
-sha256sum --check --ignore-missing SHA256SUMS
-pip install ./based_models_agentloop-0.3.0-py3-none-any.whl[anthropic]
-```
+Each PyPI release is published by GitHub Actions through Trusted Publishing and carries
+build attestations. The same wheel, sdist and `SHA256SUMS` are attached to the matching
+GitHub release.

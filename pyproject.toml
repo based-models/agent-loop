@@ -1,17 +1,20 @@
 [project]
 name = "based-models-agentloop"
-version = "0.3.0"
+version = "0.4.0"
 description = "A provider-agnostic agent loop: transcript, provider seam, tool machinery, retry, tracing."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Proprietary" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["llm", "agent", "agent-loop", "tool-use", "anthropic", "openai", "opentelemetry"]
 classifiers = [
-    # PyPI rejects uploads carrying this classifier, so a mistaken `twine upload`
-    # fails loudly. This package is installed from a private git repo only.
-    "Private :: Do Not Upload",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "Typing :: Typed",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
     "pydantic>=2.7",
@@ -36,12 +39,11 @@ dev           = [
 Repository = "https://github.com/based-models/agent-loop"
 Changelog = "https://github.com/based-models/agent-loop/blob/main/CHANGELOG.md"
 
-# No [project.scripts]. agentloop is a library; it has no command. The `harness`
-# console script belongs to the second repository (chapter 13).
+# No [project.scripts]: agentloop is a library and has no command.
 #
 # No pydantic-settings, deliberately: its whole job is reaching os.environ, which
 # is the thing the layering test bans `os` for. Settings.from_env() takes the
-# mapping instead. See chapter 1, and the wheel test's find_spec assertion.
+# mapping instead. scripts/test-wheel.sh asserts the dependency is absent.
 
 [build-system]
 requires = ["hatchling"]
@@ -58,7 +60,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 packages = ["src/agentloop"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/agentloop", "README.md", "CHANGELOG.md", "pyproject.toml"]
+include = ["src/agentloop", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
 
 [tool.mypy]
 strict = true
