@@ -1,7 +1,7 @@
 name: Release
 
-# Tag vX.Y.Z -> verify -> build once -> PyPI (Trusted Publishing, gated by the `pypi`
-# environment's required reviewers) -> GitHub Release carrying the SAME files.
+# Tag vX.Y.Z -> verify -> build once -> PyPI (Trusted Publishing; the tag IS the release
+# decision, there is no approval gate) -> GitHub Release carrying the SAME files.
 #
 # Dry run: Actions -> Release -> Run workflow on any branch publishes to TestPyPI only.
 on:
@@ -68,7 +68,7 @@ jobs:
     if: github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
-    environment: pypi            # required reviewers: a tag alone cannot publish
+    environment: pypi            # must match the trusted publisher configured on PyPI
     permissions:
       id-token: write
     steps:

@@ -1,7 +1,9 @@
 # Releasing
 
 Releases are cut from `main` by pushing a `vX.Y.Z` tag. The pipeline publishes to PyPI with
-Trusted Publishing (OIDC); there are no API tokens to store or rotate.
+Trusted Publishing (OIDC); there are no API tokens to store or rotate. There is no approval
+gate (GitHub Free private repos cannot require reviewers), so **pushing the tag publishes**:
+run the local checklist below first, and treat tag creation as the release decision.
 
 ## Checklist
 
@@ -27,8 +29,8 @@ The `Release` workflow then:
 1. **build**: refuses to continue unless the tag, `pyproject.toml` and `__version__` agree
    and the changelog has an entry; runs ruff, mypy, pytest and `scripts/test-wheel.sh`;
    builds the wheel and sdist once and uploads them as an artifact.
-2. **publish-pypi**: waits for approval on the `pypi` GitHub environment (required
-   reviewers), then uploads those exact files via Trusted Publishing, with attestations.
+2. **publish-pypi**: uploads those exact files to PyPI via Trusted Publishing, with
+   attestations.
 3. **github-release**: attaches the same files plus `SHA256SUMS` to the GitHub release.
 
 ## One-time setup
@@ -38,7 +40,9 @@ The `Release` workflow then:
   `agent-loop`, workflow `release.yml`, environment `pypi` (TestPyPI: `testpypi`). The first
   successful publish creates the project, so the name is reserved only at that moment:
   register the pending publisher promptly.
-- GitHub environments `pypi` (with required reviewers) and `testpypi`.
+- GitHub environments named `pypi` and `testpypi`. They must exist with exactly those names
+  because the PyPI trusted publisher matches on the environment name. (Required reviewers
+  are unavailable on private Free-plan repos, so they are not used.)
 
 ## Dry run
 
