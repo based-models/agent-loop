@@ -194,11 +194,14 @@ authentication, bad-request, context-length, missing-model, and credit errors fa
 immediately. Server `Retry-After` values are honored within the configured delay limit.
 
 ```python
-from agentloop import AgentLoopError
+import os
+
+from agentloop import Agent, AgentLoopError
 from agentloop.errors import AuthError, RateLimited
 
 try:
-    answer = agent.run("Hello")
+    with Agent.from_env(os.environ, tools=[]) as agent:
+        print(agent.run("Hello"))
 except AuthError:
     print("Check provider credentials")
 except RateLimited as error:
