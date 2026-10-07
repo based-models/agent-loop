@@ -55,3 +55,15 @@ Installs a process-global SDK tracer provider with a batched OTLP/HTTP exporter 
 `{endpoint}/v1/traces`. Returns the provider so the application can call `force_flush()` and
 `shutdown()`. Raises `ImportError` with installation guidance if the SDK extra is absent.
 The function does not read `OTEL_*` variables.
+
+## `agentloop.metrics.MetricsObserver`
+
+```text
+MetricsObserver(meter=None)
+```
+
+Records conversation outcomes as OpenTelemetry counters and histograms, driven by each
+`ConversationSummary`. Stateless, so one instance can serve concurrent conversations. Uses
+`opentelemetry.metrics.get_meter("agentloop")` unless you pass a `Meter`; records nothing
+until the application installs a `MeterProvider`. `Agent(metrics=True)` adds one. The
+instruments and their attributes are listed in the [tracing guide](../guides/tracing.md#metrics).

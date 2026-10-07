@@ -99,6 +99,9 @@ class Usage(BaseModel):
     cache_write_tokens: int | None = Field(default=None, ge=0)
     reasoning_tokens: int | None = Field(default=None, ge=0)
     cost_usd: float | None = Field(default=None, ge=0)
+    # Whether `input_tokens` already counts `cache_read_tokens`. OpenAI-style APIs
+    # include them; Anthropic reports them separately. Only a hit-rate needs to know.
+    input_includes_cached: bool = True
 
 
 class ModelResponse(BaseModel):
@@ -117,6 +120,10 @@ class ModelResponse(BaseModel):
     provider: str
     raw_stop_reason: str | None = None
     request_id: str | None = None
+    # Provider attempts this response took, set by RetryingClient. 1 means no retry.
+    attempts: int = Field(default=1, ge=1)
+    # Seconds RetryingClient slept between those attempts. 0 means none.
+    retry_wait_seconds: float = Field(default=0.0, ge=0)
     # The adapter's own wire form of this turn, for exact replay. See Origin.
     origin: Origin | None = None
 

@@ -219,6 +219,16 @@ Observers receive request, response, retry, and tool lifecycle events without ch
 behavior. `ConsoleObserver` provides readable local output, `ListObserver` records events for
 tests and debugging, and `MultiObserver` combines observers.
 
+Every conversation also produces a content-free summary -- why it stopped, iterations
+against the limit, elapsed time, tool calls and errors, retries, tokens and cost -- on
+success and on failure. Read it from `Agent.run_result(...).summary`, from the exception's
+`.summary`, or from an observer's `on_conversation_end`.
+
+Opt-in extras -- a per-turn timeline, stuck-loop detection, budget warnings -- are one
+`SummaryOptions` object. `EventTraceObserver` writes a JSONL trace through a callable you
+supply (content-free by default; capturing content requires a redactor), and
+`Agent(metrics=True)` records OpenTelemetry metrics.
+
 Install the `otel` extra to emit OpenTelemetry spans for conversations, model requests,
 tools, and retries. Prompt and tool content is not captured by tracing unless the application
 explicitly enables it.

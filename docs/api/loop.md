@@ -42,6 +42,14 @@ transcript.add_user_message("hello")
 run_conversation(transcript, client, Registry([]), Deps())
 ```
 
+## `run_conversation_result`
+
+Same parameters as `run_conversation`, returning a `ConversationResult` (`.transcript`,
+`.summary`, `.text`). Both functions also accept `agent_name`, `conversation_id`,
+`correlation_id` and `parent_id`, which label the summary, and `summary_options`
+(a `SummaryOptions`: timeline, stall threshold, budget warnings). See
+[Conversation summaries](../guides/summaries.md).
+
 ## `ListObserver`
 
 An observer for tests and debugging. Public attribute `events` contains ordered

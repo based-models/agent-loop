@@ -40,12 +40,15 @@ CORE_ALLOWED = {
     "concurrent",       # ThreadPoolExecutor, in the tool executor
     "contextlib",       # nullcontext / contextmanager, observers and tracing
     "enum",             # StopReason
+    "hashlib",          # stall detection compares tool calls by hash, in memory only
     "inspect",          # signature().bind(), tool executor and @tool
+    "json",             # canonical tool arguments (stall) and event-trace lines
     "logging",
     "random",           # retry jitter
     "threading",        # tracing's provider-install lock
     "time",             # loop deadline, retry backoff
     "typing",
+    "uuid",             # conversation ids
     # declared dependencies -- keep in sync with pyproject.toml
     "opentelemetry",
     "pydantic",

@@ -361,3 +361,89 @@ def test_from_env_puts_retries_on_the_model_span(
         assert agent.run("go") == "hi"
     chat = next(s for s in exporter.get_finished_spans() if s.name == "chat openrouter/free")
     assert [event.name for event in chat.events] == ["retry"]
+
+
+def test_the_root_span_carries_the_conversation_summary(
+    exporter: InMemorySpanExporter,
+) -> None:
+    exporter.clear()
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    run_conversation(
+        transcript,
+        ScriptedClient(
+            resp(echo_call("the-secret"), stop=StopReason.TOOL_USE,
+                 usage=Usage(input_tokens=100, output_tokens=20)),
+            resp(TextPart(text="done"), usage=Usage(input_tokens=150, output_tokens=10)),
+        ),
+        REGISTRY, ToyDeps(),
+        observer=OTelObserver(provider="fake", model="m", agent_name="harness"),
+        agent_name="harness", correlation_id="round-42", parent_id="lookup-1",
+    )
+    (root,) = [s for s in exporter.get_finished_spans() if s.name == "invoke_agent harness"]
+    got = attrs(root)
+    assert got["agentloop.conversation.status"] == "completed"
+    assert got["agentloop.conversation.iterations"] == 2
+    assert got["agentloop.conversation.iteration_limit"] == 50
+    assert got["agentloop.conversation.correlation_id"] == "round-42"
+    assert got["agentloop.conversation.parent_id"] == "lookup-1"
+    assert got["agentloop.usage.input_tokens"] == 250
+    assert got["agentloop.tool.calls.echo"] == 1
+    assert "agentloop.usage.cost_usd" not in got  # never reported, so not asserted as 0
+    assert "the-secret" not in str(dict(got))  # content stays out with capture off
+
+
+def test_a_failed_conversation_is_summarized_on_its_error_span(
+    exporter: InMemorySpanExporter,
+) -> None:
+    exporter.clear()
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    with pytest.raises(Exception):  # noqa: B017 - the point is the span, not the type
+        run_conversation(
+            transcript, ScriptedClient(), REGISTRY, ToyDeps(),
+            observer=OTelObserver(provider="fake", model="m", agent_name="harness"),
+            deadline_seconds=-1.0,
+        )
+    (root,) = [s for s in exporter.get_finished_spans() if s.name == "invoke_agent harness"]
+    assert attrs(root)["agentloop.conversation.status"] == "deadline_exceeded"
+    assert root.status.status_code is StatusCode.ERROR
+
+
+def test_the_root_span_gets_its_ids_immediately_and_signals_as_events(
+    exporter: InMemorySpanExporter,
+) -> None:
+    from agentloop.summary import SummaryOptions
+
+    exporter.clear()
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    run_conversation(
+        transcript,
+        ScriptedClient(
+            *[
+                resp(
+                    ToolCallPart(id=f"s{i}", tool_name="echo", arguments={"text": "hi"}),
+                    stop=StopReason.TOOL_USE,
+                )
+                for i in range(3)
+            ],
+            resp(TextPart(text="done"),
+                 usage=Usage(input_tokens=60, cache_read_tokens=30)),
+        ),
+        REGISTRY, ToyDeps(),
+        observer=OTelObserver(provider="fake", model="m", agent_name="harness"),
+        correlation_id="round-7", conversation_id="conv-7", max_iterations=6,
+        summary_options=SummaryOptions(stall_threshold=3, warn_at=(0.5,)),
+    )
+    (root,) = [s for s in exporter.get_finished_spans() if s.name == "invoke_agent harness"]
+    got = attrs(root)
+    assert got["agentloop.conversation.id"] == "conv-7"
+    assert got["agentloop.conversation.correlation_id"] == "round-7"
+    assert got["agentloop.conversation.stalled"] is True
+    assert got["agentloop.conversation.max_repeated_tool_calls"] == 3
+    assert got["agentloop.usage.cache_hit_rate"] == pytest.approx(0.5)
+    assert got["agentloop.conversation.model_seconds"] >= 0
+    events = {event.name: dict(event.attributes or {}) for event in root.events}
+    assert events["agentloop.stall"] == {"tool": "echo", "count": 3}
+    assert events["agentloop.budget_warning"]["kind"] == "iterations"

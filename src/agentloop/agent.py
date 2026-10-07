@@ -17,10 +17,11 @@ from agentloop.loop import (
     DEFAULT_DEADLINE_SECONDS,
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_MAX_TOKENS,
-    run_conversation,
+    run_conversation_result,
 )
 from agentloop.observer import LoopObserver
 from agentloop.provider import HostedTool, LLMClient, supported_hosted_tools
+from agentloop.summary import ConversationResult, SummaryOptions
 from agentloop.tooling import (
     ApprovalHook,
     Handler,
@@ -29,7 +30,7 @@ from agentloop.tooling import (
     ToolSpec,
     allow_all,
 )
-from agentloop.transcript import Transcript, final_text
+from agentloop.transcript import Transcript
 
 
 class Deps(BaseModel):
@@ -121,6 +122,19 @@ def _with_tracing(
     return MultiObserver(observer, spans) if observer is not None else spans
 
 
+def _with_metrics(observer: LoopObserver | None) -> LoopObserver:
+    """Add a `MetricsObserver` beside whatever was already passed.
+
+    Lazy for the same reason as `_with_tracing`: the OpenTelemetry import must not run
+    at `import agentloop`.
+    """
+    from agentloop.metrics import MetricsObserver
+    from agentloop.observer import MultiObserver
+
+    metrics = MetricsObserver()
+    return MultiObserver(observer, metrics) if observer is not None else metrics
+
+
 class Agent:
     """A client, a registry and a deps bundle, wired together."""
 
@@ -137,11 +151,18 @@ class Agent:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         deadline_seconds: float | None = DEFAULT_DEADLINE_SECONDS,
+        summary_options: SummaryOptions | None = None,
+        metrics: bool = False,
     ) -> None:
         """A client, a registry and a deps bundle, wired together.
 
         `client` is not owned by this `Agent` and is never closed by it -- see
         `close()` and `from_env()`, which do own the client they build.
+
+        `summary_options` turns on the opt-in extras of every run's summary (timeline,
+        stall detection, budget warnings). `metrics=True` adds a `MetricsObserver` that
+        records OpenTelemetry metrics; like tracing, it records nothing until the
+        application installs a `MeterProvider`.
 
         `trace=True` builds an `OTelObserver` (from `client.name`/`client.model`
         and `name`) and merges it with `observer`. Spans go nowhere until you
@@ -166,6 +187,9 @@ class Agent:
             if trace
             else observer
         )
+        if metrics:
+            self._observer = _with_metrics(self._observer)
+        self._summary_options = summary_options
         self._max_tokens = max_tokens
         self._max_iterations = max_iterations
         self._deadline_seconds = deadline_seconds
@@ -213,15 +237,78 @@ class Agent:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    def run(self, prompt: str) -> str:
-        """One question, one answer. Discards the transcript."""
+    def run(
+        self,
+        prompt: str,
+        *,
+        conversation_id: str | None = None,
+        correlation_id: str | None = None,
+        parent_id: str | None = None,
+    ) -> str:
+        """One question, one answer. Discards the transcript.
+
+        The keyword arguments label the run's `ConversationSummary`; see `converse`.
+        """
+        return self.run_result(
+            prompt,
+            conversation_id=conversation_id,
+            correlation_id=correlation_id,
+            parent_id=parent_id,
+        ).text
+
+    def run_result(
+        self,
+        prompt: str,
+        *,
+        conversation_id: str | None = None,
+        correlation_id: str | None = None,
+        parent_id: str | None = None,
+    ) -> ConversationResult:
+        """`run`, returning the answer together with how the conversation went."""
         transcript = Transcript()
         transcript.add_user_message(prompt)
-        return final_text(self.converse(transcript))
+        return self.converse_result(
+            transcript,
+            conversation_id=conversation_id,
+            correlation_id=correlation_id,
+            parent_id=parent_id,
+        )
 
-    def converse(self, transcript: Transcript) -> Transcript:
-        """Advance an existing transcript. Mutates and returns it."""
-        return run_conversation(
+    def converse(
+        self,
+        transcript: Transcript,
+        *,
+        conversation_id: str | None = None,
+        correlation_id: str | None = None,
+        parent_id: str | None = None,
+    ) -> Transcript:
+        """Advance an existing transcript. Mutates and returns it.
+
+        `correlation_id` and `parent_id` are yours, to group conversations under one
+        run; `conversation_id` is generated when omitted. All three are echoed in the
+        `ConversationSummary` this run emits (see `converse_result`).
+        """
+        return self.converse_result(
+            transcript,
+            conversation_id=conversation_id,
+            correlation_id=correlation_id,
+            parent_id=parent_id,
+        ).transcript
+
+    def converse_result(
+        self,
+        transcript: Transcript,
+        *,
+        conversation_id: str | None = None,
+        correlation_id: str | None = None,
+        parent_id: str | None = None,
+    ) -> ConversationResult:
+        """`converse`, returning the transcript together with its summary.
+
+        The summary is also sent to the observer's `on_conversation_end`, and a
+        failed run's `AgentLoopError` carries it as `.summary`.
+        """
+        return run_conversation_result(
             transcript,
             self._client,
             self._registry,
@@ -232,6 +319,11 @@ class Agent:
             max_iterations=self._max_iterations,
             deadline_seconds=self._deadline_seconds,
             hosted_tools=self._hosted,
+            agent_name=self.name,
+            summary_options=self._summary_options,
+            conversation_id=conversation_id,
+            correlation_id=correlation_id,
+            parent_id=parent_id,
         )
 
 

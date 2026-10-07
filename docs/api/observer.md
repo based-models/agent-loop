@@ -14,6 +14,10 @@ A protocol with these methods:
 | `on_retry(attempt, error)` | Before retrying a provider failure |
 | `on_tool_start(call)` | Before a tool handler runs |
 | `on_tool_end(call, result)` | After a tool produces its paired result |
+| `on_conversation_start(context)` | Once, right after `conversation()` is entered, with the ids and limits; optional |
+| `on_conversation_end(summary)` | Once per conversation, on success or failure, inside `conversation()`; optional |
+| `on_budget_warning(kind, used, limit)` | A fraction in `SummaryOptions.warn_at` of the iteration limit or deadline is used; optional |
+| `on_stall(tool_name, count)` | A tool was called with identical arguments `count` times (`SummaryOptions.stall_threshold`); optional |
 | `on_text_delta(text)` | Reserved for streaming; unused by the current loop |
 
 `conversation()` returns `AbstractContextManager[None]`. Implementations may use it to

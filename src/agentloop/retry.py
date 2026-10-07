@@ -77,12 +77,16 @@ class RetryingClient:
 
     def complete(self, request: ModelRequest) -> ModelResponse:
         policy = self._policy
+        waited = 0.0  # seconds spent sleeping between attempts
         for attempt in range(1, policy.max_attempts + 1):
             try:
-                return self._inner.complete(request)
+                response = self._inner.complete(request)
             except ProviderError as error:
                 is_last_attempt = attempt == policy.max_attempts
                 if not error.retryable or is_last_attempt:
+                    # So a summary can count retries for a call that never answered.
+                    error.attempts = attempt
+                    error.retry_wait_seconds = waited
                     raise
                 delay = self._delay_for(attempt, error)
                 self._observer.on_retry(attempt, error)
@@ -94,6 +98,13 @@ class RetryingClient:
                     delay,
                 )
                 time.sleep(delay)
+                waited += delay
+            else:
+                if attempt == 1:
+                    return response
+                return response.model_copy(
+                    update={"attempts": attempt, "retry_wait_seconds": waited}
+                )
         raise AssertionError("unreachable: the loop always returns or raises")
 
     def _delay_for(self, attempt: int, error: ProviderError) -> float:

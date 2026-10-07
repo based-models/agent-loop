@@ -25,7 +25,9 @@ from opentelemetry.context import Context
 from opentelemetry.trace import Span, Status, StatusCode
 
 from agentloop.errors import ProviderError
+from agentloop.observer import BudgetKind
 from agentloop.provider import ModelRequest, ModelResponse
+from agentloop.summary import ConversationContext, ConversationSummary
 from agentloop.transcript import HostedToolPart, ToolCallPart, ToolResultPart
 
 if TYPE_CHECKING:  # pragma: no cover - the SDK is the [otel] extra
@@ -67,6 +69,7 @@ class OTelObserver:
         self._agent_name = agent_name
         # Off by default: a coding agent's prompts contain the user's source code.
         self._capture = capture_content
+        self._root: Span | None = None
         self._model_span: Span | None = None
         self._tool_spans: dict[str, Span] = {}
         # Tools run in a thread pool (see tooling.py): on_tool_start/on_tool_end/
@@ -98,6 +101,7 @@ class OTelObserver:
                 record_exception=self._capture,
                 set_status_on_exception=False,
             ) as root:
+                self._root = root
                 self._context = trace.set_span_in_context(root)
                 try:
                     yield
@@ -119,6 +123,7 @@ class OTelObserver:
                         )
                     raise
         finally:
+            self._root = None
             self._model_span = None
             self._tool_spans = {}
             self._context = None
@@ -257,6 +262,70 @@ class OTelObserver:
                 span.set_status(Status(StatusCode.ERROR, detail))
         finally:
             span.end()
+
+    def on_conversation_start(self, context: ConversationContext) -> None:
+        """Stamp the ids on the root span immediately, so even a run that never
+        finishes (a crashed process, an in-flight span) can be found by them."""
+        root = self._root
+        if root is None:
+            return
+        root.set_attribute("agentloop.conversation.id", context.conversation_id)
+        if context.correlation_id is not None:
+            root.set_attribute("agentloop.conversation.correlation_id", context.correlation_id)
+        if context.parent_id is not None:
+            root.set_attribute("agentloop.conversation.parent_id", context.parent_id)
+
+    def on_budget_warning(self, kind: BudgetKind, used: float, limit: float) -> None:
+        if self._root is not None:
+            self._root.add_event(
+                "agentloop.budget_warning",
+                {"kind": kind, "used": used, "limit": limit},
+            )
+
+    def on_stall(self, tool_name: str, count: int) -> None:
+        if self._root is not None:
+            self._root.add_event(
+                "agentloop.stall", {"tool": tool_name, "count": count}
+            )
+
+    def on_conversation_end(self, summary: ConversationSummary) -> None:
+        """Put the outcome on the root span, where a trace reader looks first.
+
+        Counts, names and statuses only, so it is the same with capture on or off.
+        Optional fields that are None are omitted rather than asserted as zero.
+        """
+        root = self._root
+        if root is None:
+            return
+        attributes: dict[str, Any] = {
+            "agentloop.conversation.id": summary.conversation_id,
+            "agentloop.conversation.status": str(summary.status),
+            "agentloop.conversation.iterations": summary.iterations,
+            "agentloop.conversation.elapsed_seconds": summary.elapsed_seconds,
+            "agentloop.conversation.provider_retries": summary.provider_retries,
+            "agentloop.conversation.model_seconds": summary.model_seconds,
+            "agentloop.conversation.tool_seconds": summary.tool_seconds,
+            "agentloop.conversation.retry_wait_seconds": summary.retry_wait_seconds,
+            "agentloop.conversation.max_repeated_tool_calls": summary.max_repeated_tool_calls,
+            "agentloop.conversation.stalled": summary.stalled,
+            "agentloop.usage.input_tokens": summary.usage.input_tokens,
+            "agentloop.usage.output_tokens": summary.usage.output_tokens,
+        }
+        optional: dict[str, Any] = {
+            "agentloop.conversation.correlation_id": summary.correlation_id,
+            "agentloop.conversation.parent_id": summary.parent_id,
+            "agentloop.conversation.iteration_limit": summary.iteration_limit,
+            "agentloop.conversation.deadline_seconds": summary.deadline_seconds,
+            "agentloop.usage.cost_usd": summary.usage.cost_usd,
+            "agentloop.usage.cache_hit_rate": summary.cache_hit_rate,
+        }
+        attributes.update({k: v for k, v in optional.items() if v is not None})
+        # One flat attribute per tool: OTel attribute values cannot be maps.
+        for name, count in summary.tool_calls.items():
+            attributes[f"agentloop.tool.calls.{name}"] = count
+        for name, count in summary.tool_errors.items():
+            attributes[f"agentloop.tool.errors.{name}"] = count
+        root.set_attributes(attributes)
 
     def on_text_delta(self, text: str) -> None:
         """Reserved for streaming."""

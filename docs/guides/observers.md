@@ -31,4 +31,10 @@ tests and debugging. Callback failures are logged and swallowed so telemetry can
 a conversation; failure while entering `conversation()` is not swallowed because no agent
 work has begun.
 
+Four hooks are optional, so observers written before they existed keep working:
+`on_conversation_start`, `on_conversation_end`, `on_budget_warning` and `on_stall`. They
+carry the run's ids, its `ConversationSummary`, and the opt-in warnings described in
+[Conversation summaries](summaries.md). To keep a JSONL record of everything, see the
+[event trace](event-trace.md).
+
 See the [`observer` API](../api/observer.md).

@@ -67,8 +67,24 @@ def test_retries_then_succeeds() -> None:
     inner = FlakyClient(
         ProviderUnavailable("529 overloaded"), ProviderUnavailable("529 overloaded")
     )
-    assert RetryingClient(inner, policy=FAST).complete(REQUEST) is OK
+    response = RetryingClient(inner, policy=FAST).complete(REQUEST)
+    # stamped for summaries: how many attempts, and how long it slept between them
+    assert response.model_copy(update={"retry_wait_seconds": 0.0}) == OK.model_copy(
+        update={"attempts": 3}
+    )
+    assert response.retry_wait_seconds > 0
     assert inner.call_count == 3
+
+
+def test_a_first_try_success_is_returned_untouched() -> None:
+    assert RetryingClient(FlakyClient(), policy=FAST).complete(REQUEST) is OK
+
+
+def test_an_exhausted_call_reports_how_many_attempts_it_made() -> None:
+    inner = FlakyClient(*[ProviderUnavailable("503") for _ in range(3)])
+    with pytest.raises(ProviderUnavailable) as caught:
+        RetryingClient(inner, policy=FAST).complete(REQUEST)
+    assert caught.value.attempts == 3
 
 
 def test_does_not_retry_a_client_error() -> None:
@@ -149,7 +165,8 @@ def test_an_observer_that_raises_does_not_stop_the_retry(
         response = RetryingClient(inner, policy=FAST, observer=BrokenObserver()).complete(
             REQUEST
         )
-    assert response is OK
+    assert response.attempts == 2
+    assert response.content == OK.content
     assert inner.call_count == 2
     assert "tracer down" in caplog.text
 

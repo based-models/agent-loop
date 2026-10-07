@@ -11,9 +11,11 @@ OpenTelemetry) that most consumers never need.
 """
 
 from agentloop.agent import Agent, Deps, tool
+from agentloop.collector import SummaryCollector
 from agentloop.config import Settings, build_client
 from agentloop.errors import AgentLoopError, ToolError
-from agentloop.loop import ListObserver, run_conversation
+from agentloop.events import EventTraceObserver
+from agentloop.loop import ListObserver, run_conversation, run_conversation_result
 from agentloop.observer import (
     ConsoleObserver,
     LoopObserver,
@@ -21,6 +23,14 @@ from agentloop.observer import (
     NullObserver,
 )
 from agentloop.provider import HostedTool
+from agentloop.summary import (
+    ConversationContext,
+    ConversationResult,
+    ConversationStatus,
+    ConversationSummary,
+    SummaryOptions,
+    TurnRecord,
+)
 from agentloop.tooling import Registry, ToolDeps, ToolSpec, allow_all
 from agentloop.transcript import (
     Citation,
@@ -39,7 +49,12 @@ __all__ = [
     "AgentLoopError",
     "Citation",
     "ConsoleObserver",
+    "ConversationContext",
+    "ConversationResult",
+    "ConversationStatus",
+    "ConversationSummary",
     "Deps",
+    "EventTraceObserver",
     "HostedTool",
     "HostedToolPart",
     "ListObserver",
@@ -50,9 +65,12 @@ __all__ = [
     "Registry",
     "Settings",
     "Source",
+    "SummaryCollector",
+    "SummaryOptions",
     "ToolDeps",
     "ToolError",
     "ToolSpec",
+    "TurnRecord",
     "Transcript",
     "__version__",
     "allow_all",
@@ -60,5 +78,6 @@ __all__ = [
     "final_text",
     "join_text",
     "run_conversation",
+    "run_conversation_result",
     "tool",
 ]

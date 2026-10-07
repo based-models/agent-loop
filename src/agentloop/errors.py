@@ -6,9 +6,18 @@ Provider errors carry enough context to decide whether retrying is worthwhile;
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from agentloop.summary import ConversationSummary
+
 
 class AgentLoopError(Exception):
     """Base for everything this library raises."""
+
+    # Set by the loop on the way out, so a handler can see how the run went
+    # without having supplied an observer. None for errors raised elsewhere.
+    summary: ConversationSummary | None = None
 
 
 class TranscriptError(AgentLoopError):
@@ -27,7 +36,24 @@ class ToolError(AgentLoopError):
 
 
 class LoopBudgetExceeded(AgentLoopError):
-    """The agent loop ran out of iterations or wall-clock time."""
+    """The agent loop ran out of iterations or wall-clock time.
+
+    `kind`, `limit` and `actual` say which budget and by how much, so a handler
+    never parses the message. They are None on an instance built without them.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: Literal["iterations", "deadline"] | None = None,
+        limit: float | None = None,
+        actual: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.limit = limit
+        self.actual = actual
 
 
 class ConfigurationError(AgentLoopError, ValueError):
@@ -59,6 +85,9 @@ class ProviderError(AgentLoopError):
         self.status_code = status_code
         self.retry_after = retry_after
         self.request_id = request_id
+        # Provider attempts made before giving up; RetryingClient sets it.
+        self.attempts = 1
+        self.retry_wait_seconds = 0.0
 
 
 # --- your bug: retrying changes nothing ---
