@@ -154,17 +154,22 @@ Agent(
     max_tokens=16_000,
     max_iterations=50,
     deadline_seconds=600.0,
+    summary_options=None,
+    metrics=False,
 )
 ```
 
 Public attribute: `name`, the application-level agent name. Other constructor values are
 kept as internal state.
 
-`client` is borrowed: an agent constructed directly never closes it. `tools` must be a
-sequence of `ToolSpec`; values produced by `@tool` can be passed directly. Duplicate names
-fail during construction. `deps` is the one runtime dependency bundle passed to registered
-tool handlers, defaulting to `Deps()`. `trace=True` composes an `OTelObserver` with the
-supplied observer.
+`client` is borrowed: an agent constructed directly never closes it. `tools` accepts local
+`ToolSpec` objects and provider-run `HostedTool` objects. Values produced by `@tool` can be
+passed directly. Duplicate local tool names and unsupported hosted tools fail during
+construction. `deps` is the one runtime dependency bundle passed to local tool handlers,
+defaulting to `Deps()`. `trace=True` combines an `OTelObserver` with the supplied observer.
+`metrics=True` adds a `MetricsObserver`. `summary_options` configures the optional timeline,
+repeated-call detection, and limit warnings described in
+[Conversation summaries](../guides/summaries.md).
 
 ### `Agent.from_env`
 
@@ -179,19 +184,42 @@ files. `observer` and `trace` are connected to both retries and loop events.
 ### `Agent.run`
 
 ```text
-agent.run(prompt) -> str
+agent.run(
+    prompt,
+    *,
+    conversation_id=None,
+    correlation_id=None,
+    parent_id=None,
+) -> str
 ```
 
 Runs one new conversation and returns text from the final assistant message. Its transcript
-is discarded.
+is discarded. The optional identifiers are copied to the conversation summary and trace.
+
+### `Agent.run_result`
+
+Accepts the same arguments as `run()` and returns a `ConversationResult` containing the
+final transcript, text, and summary.
 
 ### `Agent.converse`
 
 ```text
-agent.converse(transcript) -> Transcript
+agent.converse(
+    transcript,
+    *,
+    conversation_id=None,
+    correlation_id=None,
+    parent_id=None,
+) -> Transcript
 ```
 
-Advances, mutates, and returns the supplied transcript.
+Advances, mutates, and returns the supplied transcript. The optional identifiers have the
+same meaning as in `run()`.
+
+### `Agent.converse_result`
+
+Accepts the same arguments as `converse()` and returns a `ConversationResult` containing the
+transcript and its summary.
 
 ### `Agent.close`
 
@@ -202,4 +230,5 @@ agent.close() -> None
 Closes only a client created by `from_env()`. It is safe to use `Agent` as a context manager;
 `__enter__()` returns the agent and `__exit__()` calls `close()`.
 
-A traced `Agent` is not reentrant. Concurrent traced runs require separate instances.
+A traced `Agent` supports one active conversation at a time. Concurrent traced runs require
+separate agent instances.

@@ -9,9 +9,9 @@ bare name `agentloop` on PyPI is an unrelated project. Do not install it by mist
 
 ## Extras
 
-`anthropic`, `openai-compat` (OpenAI, OpenRouter, Modal), `otel` (OpenTelemetry SDK and OTLP
-exporter) and `all`. Extras are genuinely optional: a missing one fails with an error that
-names the extra to install.
+`anthropic`, `openai-compat` (OpenAI, OpenRouter, Modal), `otel` (OpenTelemetry tracing and
+metrics), and `all`. These dependencies are optional. If one is missing, the error names the
+extra to install.
 
 ## Pinning
 

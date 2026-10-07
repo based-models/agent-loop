@@ -79,7 +79,7 @@ class ToolCallPart(Part):
 
 class ToolResultPart(Part):
     """
-    nswer to one ToolCallPart. `call_id` must match that call's `id`.
+    Answer to one ToolCallPart. `call_id` must match that call's `id`.
     """
 
     type: Literal["tool_result"] = "tool_result"
@@ -369,4 +369,3 @@ def final_text(transcript: Transcript) -> str:
         if message.role == "assistant":
             return join_text(message.content)
     return ""
-

@@ -1,7 +1,7 @@
 # Agents
 
-`Agent` is the user-friendly abstraction layer over a client, tool registry, dependency bundle, and agent
-loop.
+`Agent` keeps a model client, tools, application dependencies, and loop settings together so
+they can be reused across conversations.
 
 ```python
 import os

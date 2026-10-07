@@ -1,6 +1,6 @@
 # `agentloop.providers.anthropic`
 
-Anthropic Messages API adapter. The SDK is imported lazily and requires
+Anthropic Messages API integration. The SDK is imported only when needed and requires
 `based-models-agentloop[anthropic]`.
 
 ## Constants
@@ -12,10 +12,10 @@ Anthropic Messages API adapter. The SDK is imported lazily and requires
 
 ## Translation helpers
 
-These public pure helpers are useful for adapter tests:
+These public helpers convert between shared Agentloop types and the Anthropic API format:
 
 - `tool_to_wire(tool) -> dict[str, Any]`: converts `ToolSchema` to an Anthropic tool.
-- `message_to_wire(message) -> dict[str, Any]`: converts one canonical message to one
+- `message_to_wire(message) -> dict[str, Any]`: converts one provider-independent message to one
   Anthropic message.
 - `request_to_wire(request, *, model) -> dict[str, Any]`: builds a Messages API payload.
 - `usage_from_wire(raw) -> Usage`: normalizes Anthropic usage fields.

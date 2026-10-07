@@ -1,6 +1,6 @@
 # `agentloop.observer`
 
-Lifecycle events emitted by the loop, retry wrapper, and tool executor.
+Callbacks for conversation, model-request, retry, and tool events.
 
 ## `LoopObserver`
 
@@ -16,12 +16,12 @@ A protocol with these methods:
 | `on_tool_end(call, result)` | After a tool produces its paired result |
 | `on_conversation_start(context)` | Once, right after `conversation()` is entered, with the ids and limits; optional |
 | `on_conversation_end(summary)` | Once per conversation, on success or failure, inside `conversation()`; optional |
-| `on_budget_warning(kind, used, limit)` | A fraction in `SummaryOptions.warn_at` of the iteration limit or deadline is used; optional |
-| `on_stall(tool_name, count)` | A tool was called with identical arguments `count` times (`SummaryOptions.stall_threshold`); optional |
+| `on_budget_warning(kind, used, limit)` | A configured share of a limit has been used; optional |
+| `on_stall(tool_name, count)` | A tool repeated the same call to the configured threshold; optional |
 | `on_text_delta(text)` | Reserved for streaming; unused by the current loop |
 
-`conversation()` returns `AbstractContextManager[None]`. Implementations may use it to
-allocate and finalize per-conversation state.
+`conversation()` returns `AbstractContextManager[None]`. An observer can use it to create and
+clean up state for one conversation.
 
 ## `NullObserver`
 
@@ -50,9 +50,9 @@ is wanted.
 MultiObserver(*observers)
 ```
 
-Fans every callback out in argument order. `conversation()` enters all child contexts and
-unwinds them in reverse order. Each child is guarded independently so one broken callback
-does not starve later observers.
+Calls each observer in argument order. `conversation()` starts them in argument order and
+closes them in reverse order. A failed callback in one observer does not prevent the others
+from receiving the event.
 
 ## `GuardedObserver`
 
@@ -60,8 +60,8 @@ does not starve later observers.
 GuardedObserver(inner)
 ```
 
-Delegates `conversation()` directly. All `on_*` methods catch and log `Exception` from the
-inner observer. This prevents telemetry failures from leaving tool calls unanswered.
+Uses the wrapped observer's `conversation()` context directly. All `on_*` methods catch and
+log exceptions from the wrapped observer so reporting failures do not interrupt agent work.
 
 ## `guarded`
 
@@ -69,6 +69,6 @@ inner observer. This prevents telemetry failures from leaving tool calls unanswe
 guarded(observer: LoopObserver | None) -> LoopObserver
 ```
 
-Returns `NullObserver` for `None`, preserves an already guarded observer or an exact
-`NullObserver`, and otherwise returns `GuardedObserver(observer)`. The operation is
-idempotent.
+Returns `NullObserver` for `None`. It leaves an existing `GuardedObserver` or exact
+`NullObserver` unchanged and wraps other observers. Calling it more than once does not add
+more wrappers.

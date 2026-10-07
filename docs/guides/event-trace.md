@@ -1,8 +1,9 @@
 # Event trace
 
-`EventTraceObserver` writes one JSON object per event, so you can see what a conversation
-did: every request, response, retry and tool call, in order, with timings. It is for
-debugging and audit, where a [summary](summaries.md) is too coarse.
+`EventTraceObserver` records each conversation event as one line of JSON (JSONL). It shows
+requests, responses, retries, and tool calls in order with their timing. Use it for debugging
+or audit workflows when a [conversation summary](summaries.md) does not provide enough
+detail.
 
 ```python
 from agentloop import Agent, EventTraceObserver
@@ -10,23 +11,22 @@ from agentloop import Agent, EventTraceObserver
 with open("trace.jsonl", "a") as log:
     trace = EventTraceObserver(log.write)
     agent = Agent(tools, client=client, observer=trace)
-    agent.run("find the lead investor", correlation_id="round-42")
+    agent.run("summarize the open support case", correlation_id="case-42")
 ```
 
-The library never opens a file. You pass the callable that receives each line (`file.write`,
-a queue's `put`, or a logger's `info` with `terminator=""`), so where the trace goes is your
-decision.
+The library never opens a file or selects a logging service. You provide the function that
+receives each line, such as `file.write`, a queue's `put`, or a logger's `info` with
+`terminator=""`.
 
 ## What a line contains
 
-By default only metadata: `seq`, `ts` (wall time), `t` (seconds since the conversation
-started), `event`, the conversation, correlation and parent ids, and per event the tool
-names, call ids, token counts, cost, stop reason, status codes, error types, `is_error`,
-result sizes and tool durations. No prompt, response, argument, result or error text.
+By default, each line contains metadata only: sequence number, timestamp, elapsed time,
+event name, conversation identifiers, and relevant counts, names, sizes, or status values.
+It does not contain prompts, model responses, tool arguments, tool results, or error text.
 
-Events: `conversation_start`, `request`, `response`, `retry`, `tool_start`, `tool_end`,
-`stall`, `budget_warning`, and `conversation_end`, whose line carries the whole
-`ConversationSummary`. The trace therefore doubles as a JSONL log of summaries.
+The event names are `conversation_start`, `request`, `response`, `retry`, `tool_start`,
+`tool_end`, `stall`, `budget_warning`, and `conversation_end`. The final event carries the
+complete `ConversationSummary`, so the trace also serves as a JSONL log of summaries.
 
 ## Capturing content
 
@@ -39,25 +39,24 @@ def redact(text: str) -> str:
 trace = EventTraceObserver(log.write, capture_content=True, redact=redact)
 ```
 
-With `capture_content=True` the trace also carries what was said: the system prompt (once),
-each request's NEW messages (not the whole transcript every turn), response content, tool
+With `capture_content=True`, the trace also carries the system prompt once, messages added
+since the previous request, response content, tool
 arguments and results, and error messages.
 
-- **Every captured string passes through `redact`**, and is then clipped to
-  `max_string_chars` (default 2000). Redaction runs first, so a cut cannot expose half a
-  secret.
+- **Every captured string passes through `redact`**, and is then limited to
+  `max_string_chars` (default 2000 characters). Redaction runs first, so a cut cannot expose
+  part of a secret.
 - **A redactor is required.** `capture_content=True` without one raises
   `ConfigurationError` unless you pass `allow_unredacted=True`.
 - **The library ships no patterns.** A built-in list of things that look like secrets would
   promise more than it can keep; plug in your organization's scrubber.
-- **It fails closed.** If `redact` raises, that event is dropped (and logged), never written
-  unredacted.
+- **It fails closed.** If `redact` raises an exception, that event is dropped and logged. It
+  is never written without redaction.
 - Structure you chose (tool names, ids, roles, part types) is not redacted; everything the
   model, a tool or a provider produced is.
 
 ## Using it with others
 
-One `EventTraceObserver` traces one conversation at a time, like `OTelObserver`: the
-callbacks carry no conversation id, so build one per concurrent conversation. Combine it
-with other observers through `MultiObserver`. Lines are written under a lock, so `seq` and
-file order agree even when tools run in parallel.
+One `EventTraceObserver` supports one active conversation at a time. Create one instance for
+each concurrent conversation. Combine it with other observers through `MultiObserver`.
+Sequence numbers and output order remain consistent when tools run in parallel.

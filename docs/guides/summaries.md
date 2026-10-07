@@ -1,12 +1,13 @@
 # Conversation summaries
 
-When an agent stops, you want to know why without reading its prompts. Every run produces a
-`ConversationSummary`: counts, names and statuses only. No message, tool argument, tool
-result or exception text is ever in it, so it is safe to log, ship to a metrics backend or
-persist with a checkpoint.
+Every run produces a `ConversationSummary` that explains how the conversation ended without
+copying its content. It contains counts, names, status values, timing, and usage. It does not
+contain messages, tool arguments, tool results, or exception text. This metadata-only format
+is suitable for operational logs, metrics, and checkpoints, subject to your organization's
+rules for identifiers and tool names.
 
 ```python
-result = agent.run_result("find the lead investor", correlation_id="round-42")
+result = agent.run_result("summarize the open support case", correlation_id="case-42")
 print(result.text)
 print(result.summary.model_dump_json())
 ```
@@ -14,16 +15,16 @@ print(result.summary.model_dump_json())
 ```json
 {
   "conversation_id": "9f1c...",
-  "correlation_id": "round-42",
-  "agent_name": "investor-lookup",
+  "correlation_id": "case-42",
+  "agent_name": "support-case-review",
   "provider": "openrouter",
   "model": "gpt-5.1",
   "status": "iteration_limit",
   "iterations": 30,
   "iteration_limit": 30,
   "elapsed_seconds": 412.8,
-  "tool_calls": {"web_search": 4, "fetch_source": 8},
-  "tool_errors": {"fetch_source": 2},
+  "tool_calls": {"search_knowledge_base": 4, "fetch_article": 8},
+  "tool_errors": {"fetch_article": 2},
   "provider_retries": 1,
   "usage": {"input_tokens": 12000, "output_tokens": 3500, "cost_usd": 0.08}
 }
@@ -47,17 +48,17 @@ Branch on `summary.status` (a `ConversationStatus`), never on an exception messa
 `status.succeeded` and `status.budget_exhausted` cover the common branches.
 `LoopBudgetExceeded` also has structured `.kind`, `.limit` and `.actual`.
 
-## Three ways to receive it
+## Get the summary
 
 1. **From the result**: `run_result`, `converse_result` or `run_conversation_result` return
    a `ConversationResult` with `.transcript`, `.summary` and `.text`. The existing
    `run`, `converse` and `run_conversation` still return what they always did.
-2. **From the exception**: an `AgentLoopError` raised out of a run carries `.summary`, so a
-   failure handler needs no observer. Exceptions that are not `AgentLoopError` reach only
+2. **From the exception**: an `AgentLoopError` raised by a run carries `.summary`, so a
+   failure handler does not need an observer. Other exception types are reported only to
    observers.
 3. **From an observer**: `on_conversation_end(summary)` fires exactly once per
-   conversation, on success and failure, while `conversation()` is still open (so a tracer
-   can write to its span). A sink that raises is logged and cannot mask the real failure.
+   conversation, on success and failure. If the callback raises, the library logs that
+   callback failure without hiding the conversation's result or error.
 
 ```python
 class JsonlSink(NullObserver):
@@ -67,11 +68,10 @@ class JsonlSink(NullObserver):
 
 ## Grouping conversations
 
-`correlation_id` and `parent_id` are yours: pass the same `correlation_id` to every
-conversation in one run (a funding round, a web request) and the library echoes it in each
-summary and on the OpenTelemetry root span. `conversation_id` is generated unless you pass
-one. Grouping, aggregation and persistence across conversations belong to your orchestration
-layer; the library only labels.
+Your application supplies `correlation_id` and `parent_id`. For example, pass the same
+`correlation_id` to every conversation used to handle one web request. The library copies
+these values into summaries and OpenTelemetry root spans. It generates `conversation_id`
+unless you supply one. Your application decides how to group, store, and aggregate runs.
 
 ## What the numbers mean
 
@@ -79,8 +79,8 @@ layer; the library only labels.
   truncated turn and each paused continuation.
 - `None` means unknown, never zero. `usage.cost_usd` is `None` unless a provider turn
   reported a cost; if only some turns did, it is the sum of those.
-- `provider_retries` counts extra attempts beyond the first, across all calls, including a
-  call that finally failed. It works with any `RetryingClient`, with no observer wiring.
+- `provider_retries` counts attempts after the first, including attempts for a request that
+  ultimately failed. It works with any `RetryingClient` and requires no observer setup.
 
 ## OpenTelemetry
 
@@ -101,7 +101,7 @@ tool's own call durations; tools in one turn run in parallel, so it can exceed
 provider reported no cache tokens. It accounts for providers that count cached tokens inside
 `input_tokens` (OpenAI-style) and those that report them separately (Anthropic).
 
-## Opt-in extras: `SummaryOptions`
+## Optional detail and warnings
 
 ```python
 from agentloop import Agent, SummaryOptions
@@ -113,10 +113,9 @@ agent = Agent(
 )
 ```
 
-Everything is off by default; one object holds the knobs so entry points do not grow a
-parameter per feature.
+These features are off by default. Configure them together with `SummaryOptions`.
 
-- **`stall_threshold`**: flag a run in which one tool was called with identical arguments
+- **`stall_threshold`**: flag a run in which the same tool was called with identical arguments
   that many times (3 is a good start). `max_repeated_tool_calls` is reported either way;
   `stalled` and the `on_stall` event need the threshold. The flag never changes behavior or
   status: a stalled run that hits its limit is still `iteration_limit`, with `stalled=True`
@@ -128,11 +127,11 @@ parameter per feature.
 - **`timeline`**: `summary.timeline` becomes a tuple of `TurnRecord`s, one per model call:
   duration, stop reason, tokens, cost, attempts, the tools it led to and which of them
   errored, and whether a truncated turn was discarded. A call that raised appears with its
-  `error_type`. Still content-free.
+  `error_type`. The timeline also excludes conversation content.
 
-## Seam
+## How reporting stays separate from execution
 
-The loop supplies only what it alone knows: iterations, limits, elapsed time, status and
-ids. `SummaryCollector`, an ordinary observer, aggregates tokens, tool counts and retries.
-Sinks (JSONL, metrics, tracing) are further observers. Nothing here imports OpenTelemetry
-or touches the machine.
+The loop reports iterations, limits, elapsed time, status, and identifiers.
+`SummaryCollector` gathers tokens, tool counts, and retries through the same observer
+interface available to applications. JSONL event traces, metrics, and distributed traces are
+separate observers, so reporting failures do not change agent behavior.

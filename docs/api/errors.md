@@ -25,7 +25,8 @@ AgentLoopError
 - `TranscriptError`: a transcript is inconsistent or unsafe to send.
 - `ToolError`: a handler failure whose message is intended for the model. Raise this inside
   application tools; the executor converts it into an error result.
-- `LoopBudgetExceeded`: iteration or between-turn wall-clock budget was exhausted.
+- `LoopBudgetExceeded`: the iteration or elapsed-time limit was reached. Its `kind`,
+  `limit`, and `actual` attributes identify the limit without requiring message parsing.
 - `ConfigurationError`: required configuration is absent or contradictory.
 
 ## `ProviderError`
@@ -41,9 +42,14 @@ ProviderError(
 )
 ```
 
-Public attributes are `provider`, `status_code`, `retry_after`, `request_id`, and the class
-attribute `retryable`. Only `RateLimited`, `ProviderUnavailable`, `ProviderTimeout`, and
+Public attributes are `provider`, `status_code`, `retry_after`, `request_id`, `attempts`,
+`retry_wait_seconds`, and the class attribute `retryable`. `RetryingClient` sets `attempts`
+and `retry_wait_seconds`. Only `RateLimited`, `ProviderUnavailable`, `ProviderTimeout`, and
 `ResponseInvalid` set `retryable = True`.
+
+An `AgentLoopError` raised from an active conversation also carries its
+`ConversationSummary` as `.summary`. Errors raised before a conversation starts may have
+`.summary = None`.
 
 ```python
 from agentloop.errors import ProviderError

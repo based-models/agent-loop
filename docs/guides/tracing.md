@@ -1,4 +1,4 @@
-# OpenTelemetry tracing
+# OpenTelemetry tracing and metrics
 
 Install the tracing extra, configure an exporter, and enable tracing on the agent:
 
@@ -29,23 +29,48 @@ finally:
     provider.shutdown()
 ```
 
-Tracing creates one conversation root span, a child for each model request, and a sibling
-for each tool call. Retries are events on the active model span.
+Tracing creates one top-level span for the conversation, one child span for each model
+request, and one span for each local tool call. A span is one timed operation in an
+OpenTelemetry trace. Retries appear as events on the related model-request span.
 
-Prompt, tool, result, and provider-error content is not captured by default. Construct an
+Prompts, tool arguments, tool results, and provider error messages are not captured by
+default. Construct an
 `OTelObserver(..., capture_content=True)` only when your data-handling policy permits that
 content to leave the process. One `OTelObserver` can trace only one conversation at a time.
 
-The root span also carries the conversation's outcome (`agentloop.conversation.*`: status,
-iterations against the limit, time split, ids, stall flag) and `agentloop.usage.cache_hit_rate`
-when known, plus `agentloop.stall` and `agentloop.budget_warning` events. These are the
-same whether or not content capture is on.
+The conversation span records its status, identifiers, iterations, limits, timing, retries,
+usage, and stall flag. It also receives stall and limit-warning events. This metadata is the
+same whether content capture is on or off.
 
 ## Metrics
 
-For dashboards and alerts, `agentloop.metrics.MetricsObserver` (or `Agent(metrics=True)`)
-records counters and histograms through the OpenTelemetry metrics API. Like tracing, it
-records nothing until your application installs a `MeterProvider`.
+For dashboards and alerts, `agentloop.metrics.MetricsObserver`—or the shorter
+`Agent(metrics=True)` option—records counters and distributions through the OpenTelemetry
+metrics API. Like tracing, it records nothing until your application configures an
+OpenTelemetry `MeterProvider`.
+
+```python
+import os
+
+from opentelemetry import metrics
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+from agentloop import Agent
+
+exporter = OTLPMetricExporter(endpoint="http://localhost:4318/v1/metrics")
+reader = PeriodicExportingMetricReader(exporter)
+meter_provider = MeterProvider(metric_readers=[reader])
+metrics.set_meter_provider(meter_provider)
+
+try:
+    with Agent.from_env(os.environ, tools=[], metrics=True) as agent:
+        agent.run("Hello")
+    meter_provider.force_flush()
+finally:
+    meter_provider.shutdown()
+```
 
 | Instrument | Kind | Attributes |
 |---|---|---|
@@ -59,8 +84,9 @@ records nothing until your application installs a `MeterProvider`.
 | `agentloop.provider.retries` | counter | provider, model |
 | `agentloop.stalls`, `agentloop.budget_warnings` | counters | tool / kind |
 
-Attributes are low-cardinality on purpose. Conversation, correlation and parent ids are
-never metric attributes: a unique value per run would give each run its own time series.
-Use traces or the event trace to find a specific run.
+Metric labels use a small, repeatable set of values such as status, provider, model, and tool
+name. Conversation, correlation, and parent IDs are excluded because unique IDs would create
+a separate metric series for every run and can overwhelm a metrics system. Use distributed
+traces or an event trace to find a specific conversation.
 
 See the [`tracing` API](../api/tracing.md).

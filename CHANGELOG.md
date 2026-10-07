@@ -6,36 +6,37 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
 ## [Unreleased]
 
 ### Added
-- Conversation summaries: every run now produces a `ConversationSummary` -- status
+- Conversation summaries: every run now produces a `ConversationSummary` with status,
   (`ConversationStatus`), iterations against the limit, elapsed time, tool calls and errors
   by name, provider retries, summed usage and cost, and optional caller-supplied
-  `correlation_id`/`parent_id`. Content-free by construction. See `docs/guides/summaries.md`.
+  `correlation_id`/`parent_id`. It excludes prompts, responses, tool arguments, tool results,
+  and exception messages. See `docs/guides/summaries.md`.
 - `LoopObserver.on_conversation_end(summary)`: fired once per conversation on success AND
   failure, inside `conversation()`. Optional: observers that lack it are skipped.
 - `run_conversation_result`, `Agent.run_result` and `Agent.converse_result` return a
   `ConversationResult` (transcript + summary). An `AgentLoopError` raised out of a run
   carries the summary as `.summary`.
-- `SummaryCollector`, the observer that aggregates what a run witnessed.
+- `SummaryCollector`, which gathers usage, retries, and tool activity for a summary.
 - `LoopBudgetExceeded.kind` / `.limit` / `.actual`, so iteration and deadline exhaustion
   are told apart without parsing the message.
 - `OTelObserver` writes the summary onto the root span (`agentloop.conversation.*`).
 - Where the time went: `model_seconds`, `tool_seconds`, `retry_wait_seconds` and per-tool
   `tool_duration_seconds` on the summary; `cache_hit_rate` where the provider reports cache
   tokens (`Usage.input_includes_cached` says how to read `input_tokens`).
-- Stuck-loop detection: `max_repeated_tool_calls` and `stalled` on the summary, and an
+- Repeated-tool-call detection: `max_repeated_tool_calls` and `stalled` on the summary, and an
   `on_stall(tool_name, count)` event, when `SummaryOptions.stall_threshold` is set. Flag
   only: status and behavior are unchanged, and only counts are kept.
 - Budget warnings: `on_budget_warning(kind, used, limit)` at the fractions in
   `SummaryOptions.warn_at`, once each. Off until configured.
 - A per-turn `timeline` of `TurnRecord`s, opt-in through `SummaryOptions.timeline`.
-- `SummaryOptions`, one frozen object for the opt-in knobs, accepted by
+- `SummaryOptions`, one frozen object for these optional settings, accepted by
   `run_conversation*` and `Agent(summary_options=...)`.
-- `on_conversation_start(context)`, so sinks can stamp ids on everything that follows.
-- `EventTraceObserver`: a JSONL event trace written through a callable you supply, content
-  free by default. Capturing content requires a `redact` function; the library ships no
+- `on_conversation_start(context)`, so observers can add identifiers to later records.
+- `EventTraceObserver`: an ordered JSONL event trace written through a function you supply.
+  It contains metadata only by default. Capturing content requires a `redact` function; the library ships no
   redaction patterns and never opens a file.
 - `agentloop.metrics.MetricsObserver` and `Agent(metrics=True)`: OpenTelemetry counters and
-  histograms with low-cardinality attributes only (never conversation or correlation ids).
+  histograms with a limited set of reusable attributes (never conversation or correlation IDs).
 
 ### Changed
 - `RetryingClient` stamps `ModelResponse.attempts` (new, default 1) and

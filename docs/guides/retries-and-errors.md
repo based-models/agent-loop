@@ -1,6 +1,6 @@
 # Retries and errors
 
-Provider adapters raise a provider-independent error hierarchy. Catch narrowly when your
+Every provider integration raises the same set of error types. Catch a specific error when your
 application can recover, or catch `AgentLoopError` at its outer boundary.
 
 ```python

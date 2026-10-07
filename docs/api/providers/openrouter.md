@@ -1,6 +1,6 @@
 # `agentloop.providers.openrouter`
 
-OpenRouter adapter using the shared OpenAI-compatible transport. Requires
+OpenRouter integration using the shared OpenAI-compatible HTTP client. Requires
 `based-models-agentloop[openai-compat]`.
 
 ## Constants
