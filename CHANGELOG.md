@@ -5,6 +5,8 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
 
 ## [Unreleased]
 
+## [0.5.0]
+
 ### Added
 - Conversation summaries: every run now produces a `ConversationSummary` with status,
   (`ConversationStatus`), iterations against the limit, elapsed time, tool calls and errors
