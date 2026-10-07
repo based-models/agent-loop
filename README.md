@@ -303,11 +303,7 @@ or another application-owned source.
 
 ## Documentation
 
-- [Documentation index](https://github.com/based-models/agent-loop/blob/main/docs/index.md)
-- [Conversation summaries](https://github.com/based-models/agent-loop/blob/main/docs/guides/summaries.md)
-- [Event traces](https://github.com/based-models/agent-loop/blob/main/docs/guides/event-trace.md)
-- [OpenTelemetry tracing and metrics](https://github.com/based-models/agent-loop/blob/main/docs/guides/tracing.md)
-- [API reference](https://github.com/based-models/agent-loop/blob/main/docs/api/index.md)
+Full documentation coming soon
 
 ## Stability and license
 
