@@ -13,6 +13,11 @@ gate), and a PyPI version number can **never be reused**, even after deletion. E
 before the tag is preparation; the tag is the point of no return. The explanation lives in `docs/guides/releasing.md`; read it if anything here is unclear
 and do not duplicate it.
 
+**Environment.** The sandbox `python3` is 3.9 and cannot build or install this project. Anything
+that runs Python (`scripts/check.sh`, `scripts/test-wheel.sh`, `scripts/verify-release.sh`) goes
+through the user's Terminal panel in the conda env: `conda run -n agentloop env PYTHON=python
+bash scripts/<name>`, output redirected to the scratchpad and read back.
+
 ## 1. Preconditions (stop and report on any failure; do not fix silently)
 Run read-only checks first:
 - On `main`, up to date with `origin/main` (`git fetch`, then compare). Unrelated local
@@ -23,37 +28,53 @@ Run read-only checks first:
 - `CHANGELOG.md` has a `## [X.Y.Z]` heading for exactly this version.
 - No `vX.Y.Z` tag exists locally or on origin (`git ls-remote --tags origin`), and
   `https://pypi.org/pypi/based-models-agentloop/X.Y.Z/json` is a 404 (that version is unpublished).
+- `bash scripts/check.sh` passes on `main` (ruff, mypy, pytest **with the 88% coverage gate** that
+  the release workflow enforces, and the bare-import check).
 - README or doc changes meant for the PyPI page are **merged to `main`**, because the tag
   publishes what is on `main`.
 
-If the version is not bumped yet, offer to do the bump (pyproject, `__init__`, changelog) on a
-branch and open a PR. Never push version bumps straight to `main`.
+If the version is not bumped yet, offer to do the bump on a branch `release-X.Y.Z` and open a
+PR (never push version bumps straight to `main`): set `X.Y.Z` in `pyproject.toml` and
+`src/agentloop/__init__.py`, and add a `## [X.Y.Z]` heading directly above the existing
+`[Unreleased]` entries (leaving `[Unreleased]` empty). Pick the number by SemVer; while `0.x`, a
+minor bump may change the public API.
 
-## 2. Confirm before tagging
+## 2. Dry run on TestPyPI (recommended; do it from the bump branch, before merging)
+TestPyPI versions are immutable too, and the previous version is usually already there, so a
+dry run from `main` (still at the old version) fails with a false "file already exists".
+- `https://test.pypi.org/pypi/based-models-agentloop/X.Y.Z/json` must be a 404 (else choose a
+  new version).
+- Dispatch from the bump branch: `gh workflow run release.yml --ref release-X.Y.Z`. If the
+  permission layer refuses (it publishes a build), do not work around it: ask the user to run
+  Actions -> Release -> Run workflow with that branch.
+- Afterwards confirm the run's `build` and `publish-testpypi` jobs succeeded, TestPyPI lists the
+  wheel and sdist for `X.Y.Z`, and **real PyPI still does not**. This also exercises `release.yml`
+  with whatever action versions are pinned, which ordinary CI never does.
+
+## 3. Confirm before tagging
 Tell the user exactly what will happen and wait for a clear yes in this conversation:
 > Tagging `vX.Y.Z` on `agent-loop` at commit `<short sha>` will publish `based-models-agentloop X.Y.Z` to PyPI
 > immediately. That version can never be re-uploaded. Proceed?
 
 A yes to an earlier question, or to a different release, does not count.
 
-## 3. Tag (only after the yes)
+## 4. Tag (only after the yes)
 ```bash
 git tag vX.Y.Z && git push origin vX.Y.Z      # one tag, by name; never `git push --tags`
 ```
 
-## 4. Watch, then verify
-- Find the run: `gh run list --workflow release.yml --limit 1`, then wait until it
-  completes (a background watch, not a sleep loop). Report each job: `build`,
-  `publish-pypi`, `github-release`.
-- Verify from the real index in a throwaway venv outside the repo:
-  ```bash
-  python3 -m venv "$TMP/v" && "$TMP/v/bin/pip" install 'based-models-agentloop[anthropic]==X.Y.Z'
-  "$TMP/v/bin/python" -c "import agentloop; print(agentloop.__version__)"
-  ```
-- Confirm the GitHub Release has the wheel, sdist and `SHA256SUMS`:
-  `gh release view vX.Y.Z --json assets`.
+## 5. Watch, then verify
+- Find the run: `gh run list --workflow release.yml --limit 1`, then wait until it completes (a
+  background watch, not a sleep loop).
+- Verify from the real index with one command, after the user agrees (it installs from PyPI):
+  `bash scripts/verify-release.sh X.Y.Z`. It checks the run's jobs, that PyPI's simple index lists
+  both files, the GitHub Release assets (wheel, sdist, `SHA256SUMS`), and a clean-venv install
+  outside the repo. Run it with the conda env's Python (`PYTHON=...`).
+- PyPI's **JSON endpoint lags** the index by minutes and can still show the old "latest" after a
+  successful publish. Judge by the simple index or `pypi.org/pypi/<name>/X.Y.Z/json`, not by
+  `info.version` on the project JSON.
 
-## 5. If something fails
+## 6. If something fails
 - Fails before `publish-pypi` uploads (tests, version check, missing pending publisher):
   nothing was published and the version is not used. Fix, then delete and re-push the tag
   **only if the user agrees**, since re-pushing re-triggers a publish.
@@ -62,7 +83,7 @@ git tag vX.Y.Z && git push origin vX.Y.Z      # one tag, by name; never `git pus
   `X.Y.(Z+1)`.
 
 ## Never
-- Tag without the explicit confirmation in step 2.
+- Tag without the explicit confirmation in step 3.
 - `git push --tags`, force-push a tag, or reuse a version number.
 - Add API tokens or `twine upload`: publishing is only via the workflow.
 - Release from anything but an up-to-date `main`.
