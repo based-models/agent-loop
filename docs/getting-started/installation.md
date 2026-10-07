@@ -9,8 +9,8 @@ pip install 'based-models-agentloop[openai-compat]'
 pip install 'based-models-agentloop[otel]'
 ```
 
-`openai-compat` supports OpenAI, OpenRouter, and Modal. `otel` adds the OpenTelemetry SDK
-and OTLP HTTP exporter. Install everything with:
+`openai-compat` supports OpenAI, OpenRouter, and Modal. `otel` adds OpenTelemetry tracing,
+metrics, and the OTLP HTTP exporter. Install everything with:
 
 ```bash
 pip install 'based-models-agentloop[all]'

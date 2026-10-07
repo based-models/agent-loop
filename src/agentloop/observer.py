@@ -14,12 +14,15 @@ from contextlib import (
     contextmanager,
     nullcontext,
 )
-from typing import Protocol
+from typing import Literal, Protocol
 
 from agentloop.provider import ModelRequest, ModelResponse
+from agentloop.summary import ConversationContext, ConversationSummary
 from agentloop.transcript import TextPart, ToolCallPart, ToolResultPart
 
 logger = logging.getLogger(__name__)
+
+type BudgetKind = Literal["iterations", "deadline"]
 
 
 class LoopObserver(Protocol):
@@ -31,6 +34,25 @@ class LoopObserver(Protocol):
     def on_retry(self, attempt: int, error: Exception) -> None: ...
     def on_tool_start(self, call: ToolCallPart) -> None: ...
     def on_tool_end(self, call: ToolCallPart, result: ToolResultPart) -> None: ...
+
+    # The three below are OPTIONAL: an observer that does not define one is simply not
+    # told, so observers written before they existed keep working.
+
+    def on_conversation_start(self, context: ConversationContext) -> None:
+        """Once, right after `conversation()` is entered: the ids and limits of this run."""
+        ...
+
+    def on_conversation_end(self, summary: ConversationSummary) -> None:
+        """Once per conversation, on success AND failure, inside `conversation()`."""
+        ...
+
+    def on_budget_warning(self, kind: BudgetKind, used: float, limit: float) -> None:
+        """A configured fraction of the iteration limit or deadline has been used."""
+        ...
+
+    def on_stall(self, tool_name: str, count: int) -> None:
+        """One tool was called with identical arguments `count` times (the threshold)."""
+        ...
 
     # Reserved for streaming / a TUI. Unused today.
     def on_text_delta(self, text: str) -> None: ...
@@ -55,6 +77,18 @@ class NullObserver:
         pass
 
     def on_tool_end(self, call: ToolCallPart, result: ToolResultPart) -> None:
+        pass
+
+    def on_conversation_start(self, context: ConversationContext) -> None:
+        pass
+
+    def on_conversation_end(self, summary: ConversationSummary) -> None:
+        pass
+
+    def on_budget_warning(self, kind: BudgetKind, used: float, limit: float) -> None:
+        pass
+
+    def on_stall(self, tool_name: str, count: int) -> None:
         pass
 
     def on_text_delta(self, text: str) -> None:
@@ -120,6 +154,22 @@ class MultiObserver(NullObserver):
         for observer in self._observers:
             observer.on_tool_end(call, result)
 
+    def on_conversation_start(self, context: ConversationContext) -> None:
+        for observer in self._observers:
+            observer.on_conversation_start(context)
+
+    def on_conversation_end(self, summary: ConversationSummary) -> None:
+        for observer in self._observers:
+            observer.on_conversation_end(summary)
+
+    def on_budget_warning(self, kind: BudgetKind, used: float, limit: float) -> None:
+        for observer in self._observers:
+            observer.on_budget_warning(kind, used, limit)
+
+    def on_stall(self, tool_name: str, count: int) -> None:
+        for observer in self._observers:
+            observer.on_stall(tool_name, count)
+
     def on_text_delta(self, text: str) -> None:
         for observer in self._observers:
             observer.on_text_delta(text)
@@ -165,6 +215,23 @@ class GuardedObserver:
 
     def on_tool_end(self, call: ToolCallPart, result: ToolResultPart) -> None:
         self._safely("on_tool_end", call, result)
+
+    def _optionally(self, event: str, *args: object) -> None:
+        # An optional hook: an observer predating it is skipped, not logged as broken.
+        if hasattr(self._inner, event):
+            self._safely(event, *args)
+
+    def on_conversation_start(self, context: ConversationContext) -> None:
+        self._optionally("on_conversation_start", context)
+
+    def on_conversation_end(self, summary: ConversationSummary) -> None:
+        self._optionally("on_conversation_end", summary)
+
+    def on_budget_warning(self, kind: BudgetKind, used: float, limit: float) -> None:
+        self._optionally("on_budget_warning", kind, used, limit)
+
+    def on_stall(self, tool_name: str, count: int) -> None:
+        self._optionally("on_stall", tool_name, count)
 
     def on_text_delta(self, text: str) -> None:
         self._safely("on_text_delta", text)

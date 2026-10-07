@@ -1,12 +1,12 @@
 # `agentloop.transcript`
 
-Canonical provider-independent conversation history.
+Provider-independent conversation history.
 
 ## Type aliases
 
 - `Role`: `"user" | "assistant"`.
-- `ContentPart`: discriminated union of `TextPart`, `ToolCallPart`, `ToolResultPart`, and
-  `ThinkingPart` using the `type` field.
+- `ContentPart`: union of `TextPart`, `ToolCallPart`, `ToolResultPart`, `ThinkingPart`, and
+  `HostedToolPart`. The `type` field identifies the concrete class.
 
 All part models are frozen and reject unknown fields.
 
@@ -18,7 +18,7 @@ Base model carrying the shared immutable/strict configuration. It has no data fi
 
 ### `TextPart`
 
-Fields: `type="text"` and required `text: str`.
+Fields: `type="text"`, required `text: str`, and optional `citations`.
 
 ```python
 part = TextPart(text="Hello")
@@ -49,10 +49,23 @@ Fields: `type="thinking"`, required `text`, and optional `signature`, `provider`
 and `raw`. `raw` preserves a vendor block for byte-faithful replay. Reasoning text may be
 empty even when a signed block is present.
 
+### `HostedToolPart`
+
+Describes a provider-run tool call. Fields include `kind`, optional `call_id`, optional
+`query`, `sources`, and optional `error`. The loop records this part for inspection but does
+not execute it as a local Python tool.
+
+### `Source` and `Citation`
+
+`Source` records the URL and optional title of a page consulted by a provider-hosted tool.
+`Citation` connects assistant text to a URL and may include a title, quoted text, or text
+offsets when the provider reports them.
+
 ## `Message`
 
-A frozen model with required `role: Role` and non-empty
-`content: tuple[ContentPart, ...]`.
+A frozen model with required `role: Role`, non-empty `content: tuple[ContentPart, ...]`, and
+optional `origin`. `origin` preserves provider-specific data needed to continue the same
+conversation accurately.
 
 ## `Transcript`
 

@@ -1,12 +1,14 @@
 # `agentloop.provider`
 
-Canonical provider-independent request and response types. Every model is frozen.
+Provider-independent request and response types. Every model is frozen.
 
 ## `StopReason`
 
 A `StrEnum` with members `END_TURN`, `TOOL_USE`, `MAX_TOKENS`, `STOP_SEQUENCE`, `REFUSAL`,
-`ERROR`, and `UNKNOWN`. Adapters preserve unfamiliar vendor values as `UNKNOWN`; a tool call
-forces `TOOL_USE` unless the response was truncated at `MAX_TOKENS`.
+`ERROR`, `PAUSED`, and `UNKNOWN`. Provider integrations preserve unfamiliar values as
+`UNKNOWN`; a local tool call forces `TOOL_USE` unless the response was truncated at
+`MAX_TOKENS`. `PAUSED` means a provider-hosted tool stopped partway through a turn and needs
+the loop to continue it.
 
 ## Type aliases
 
@@ -35,6 +37,7 @@ forces `TOOL_USE` unless the response was truncated at `MAX_TOKENS`.
 | `stop_sequences` | `tuple[str, ...]` | `()` |
 | `tool_choice` | `ToolChoice` | `"auto"` |
 | `parallel_tool_calls` | `bool` | `True` |
+| `hosted_tools` | `tuple[HostedTool, ...]` | `()` |
 
 `temperature=None` means the parameter should be omitted.
 
@@ -42,7 +45,8 @@ forces `TOOL_USE` unless the response was truncated at `MAX_TOKENS`.
 
 Fields: `input_tokens` and `output_tokens` are non-negative integers defaulting to zero;
 `cache_read_tokens`, `cache_write_tokens`, and `reasoning_tokens` are optional non-negative
-integers; `cost_usd` is an optional non-negative float. `None` means not reported, not zero.
+integers; `cost_usd` is an optional non-negative float. `input_includes_cached` reports
+whether `input_tokens` already includes cache reads. `None` means not reported, not zero.
 
 ## `ModelResponse`
 
@@ -55,6 +59,9 @@ integers; `cost_usd` is an optional non-negative float. `None` means not reporte
 | `provider` | `str` | required |
 | `raw_stop_reason` | `str | None` | `None` |
 | `request_id` | `str | None` | `None` |
+| `attempts` | positive `int` | `1` |
+| `retry_wait_seconds` | non-negative `float` | `0.0` |
+| `origin` | `Origin | None` | `None` |
 
 ```python
 response = ModelResponse(
@@ -75,3 +82,10 @@ complete(request: ModelRequest) -> ModelResponse
 ```
 
 See [custom providers](../guides/custom-providers.md) for an implementation.
+
+## `HostedTool`
+
+A provider-run capability declared on each request. `kind` names the capability, such as
+`"web_search"`, and `options` contains provider-independent settings. The provider client
+must advertise support for the kind; unsupported hosted tools are rejected when the agent
+is created.

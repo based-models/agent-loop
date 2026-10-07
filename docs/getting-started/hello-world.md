@@ -1,6 +1,7 @@
 # Hello World across providers
 
-The program is identical for every supported provider. Configuration chooses the adapter.
+The program is identical for every supported provider. Configuration chooses the provider
+integration.
 
 ```python
 import os

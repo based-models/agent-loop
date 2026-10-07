@@ -1,8 +1,8 @@
 # agentloop documentation
 
-`agentloop` is a synchronous, provider-agnostic agent loop. It supplies canonical
-conversation types, provider adapters, tool execution, retries, observers, and optional
-OpenTelemetry tracing while leaving application policy in your code.
+`agentloop` is a synchronous agent loop that works with several model providers. It supplies
+shared conversation types, tool execution, retries, limits, and operational reporting while
+leaving application policy in your code.
 
 ## Start here
 
@@ -17,8 +17,10 @@ OpenTelemetry tracing while leaving application policy in your code.
 - [Conversations and transcripts](guides/conversations.md)
 - [Providers](guides/providers.md)
 - [Implement a custom provider](guides/custom-providers.md)
+- [Conversation summaries](guides/summaries.md)
+- [Event traces](guides/event-trace.md)
 - [Observers](guides/observers.md)
-- [Tracing](guides/tracing.md)
+- [OpenTelemetry tracing and metrics](guides/tracing.md)
 - [Installing](guides/installing.md)
 - [Releasing](guides/releasing.md)
 - [Retries and errors](guides/retries-and-errors.md)
@@ -29,5 +31,5 @@ OpenTelemetry tracing while leaving application policy in your code.
 - [API reference](api/index.md)
 - [Example index](examples/index.md)
 
-The API reference covers supported names that do not begin with `_`. Underscore-prefixed
-modules and members are implementation details and can change without notice.
+The API reference covers supported names that do not begin with `_`. Names beginning with
+`_` are internal and can change without notice.

@@ -4,6 +4,8 @@ channels:
 dependencies:
   - python=3.12
   - pip>=24.0
+  - ipykernel
+  - jupyterlab
   - pip:
       # Everything else comes from pyproject.toml. Editable, so your source
       # changes take effect without reinstalling.

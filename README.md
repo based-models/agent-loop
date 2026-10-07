@@ -1,10 +1,10 @@
 # based-models-agentloop
 
-`based-models-agentloop` is a small, synchronous Python library for building reliable,
-tool-using LLM agents without tying application code to one provider. The package supplies
-the agent loop, typed conversations, provider adapters, tool execution, retries, and
-observability while leaving prompts, application state, approval policy, and secrets under
-your control.
+`based-models-agentloop` is a synchronous Python library for building reliable agents that
+use large language models and tools. The same application code can work with Anthropic,
+OpenAI, OpenRouter, or Modal/vLLM. The library manages conversations, tool execution,
+retries, limits, and operational reporting while your application keeps control of prompts,
+data, approvals, and secrets.
 
 The package is installed as `based-models-agentloop` and imported as `agentloop`.
 
@@ -15,8 +15,10 @@ The package is installed as `based-models-agentloop` and imported as `agentloop`
 - Keep complete, typed, serializable transcripts—including tool activity, sources, and
   citations.
 - Execute independent tool calls concurrently while preserving their original result order.
-- Get provider-independent retries, errors, usage data, and lifecycle limits.
-- Add console output, custom observers, or OpenTelemetry tracing without changing the loop.
+- Get consistent retries, errors, usage data, time limits, and iteration limits across
+  providers.
+- Record outcomes, event logs, distributed traces, and metrics without changing agent
+  behavior.
 - Test agent behavior offline with the included scripted `FakeClient`.
 - Install only the provider dependencies your application needs.
 
@@ -82,8 +84,9 @@ Configuration selects the provider; application and tool code stay the same.
 | OpenRouter | OpenAI-compatible Chat Completions | Yes | No |
 | Modal/vLLM | OpenAI-compatible Chat Completions | Yes | No |
 
-All adapters normalize requests, responses, token usage, stop reasons, transcripts, and
-provider failures into shared types. OpenAI uses the Responses API by default; set
+Each provider integration converts requests, responses, token usage, stop reasons,
+transcripts, and failures into the same Python types. OpenAI uses the Responses API by
+default; set
 `OPENAI_API=completions` only when Chat Completions compatibility is required.
 
 ## Local Python tools
@@ -178,10 +181,10 @@ print(final_text(transcript))
 print(transcript.model_dump_json(indent=2))
 ```
 
-A transcript can contain text, model thinking, local tool calls and results, hosted-tool
-activity, sources, and citations. It can be serialized to JSON or JSONL and restored later.
-Provider-origin data is retained where exact replay is required, while the canonical parts
-remain readable to application code.
+A transcript can contain text, model reasoning, local tool calls and results, hosted-tool
+activity, sources, and citations. It can be saved as JSON or JSONL and restored later.
+Provider-specific data needed to continue a conversation is preserved, while the common
+parts remain readable to application code.
 
 For manually assembled or restored conversations, `check_invariants()` verifies tool-call
 IDs, result adjacency, completeness, and whether the transcript is safe to send.
@@ -215,13 +218,52 @@ calls, and validates that every tool call receives exactly one result.
 
 ## Observability
 
-Observers receive request, response, retry, and tool lifecycle events without changing agent
-behavior. `ConsoleObserver` provides readable local output, `ListObserver` records events for
-tests and debugging, and `MultiObserver` combines observers.
+Choose the level of detail that fits the task:
 
-Install the `otel` extra to emit OpenTelemetry spans for conversations, model requests,
-tools, and retries. Prompt and tool content is not captured by tracing unless the application
-explicitly enables it.
+| Need | Use |
+|---|---|
+| Store how a conversation ended | `ConversationSummary` |
+| Debug or audit one conversation step by step | `EventTraceObserver` |
+| Follow a conversation across services | OpenTelemetry tracing |
+| Build dashboards and alerts | OpenTelemetry metrics |
+| Send conversation events to an existing system | A custom observer |
+
+Every conversation produces a `ConversationSummary` on success and failure. It records the
+status, model calls, elapsed time, tool calls and errors, retries, token use, and provider-
+reported cost. It contains metadata, not prompts, tool arguments, results, or exception
+messages.
+
+```python
+with Agent.from_env(os.environ, tools=[]) as agent:
+    result = agent.run_result(
+        "Summarize this account's open support cases.",
+        correlation_id="case-review-42",
+    )
+
+print(result.text)
+print(result.summary.status)
+print(result.summary.usage)
+```
+
+Read the summary from a result, from `.summary` on an `AgentLoopError`, or in an observer's
+`on_conversation_end` callback. Optional `SummaryOptions` add a per-model-call timeline,
+warnings as a conversation approaches its limits, and detection of repeated tool calls.
+
+`EventTraceObserver` writes an ordered JSONL event stream to a function supplied by your
+application, such as a file writer, logger, or queue. Its default output contains metadata
+only. Capturing prompts, responses, tool arguments, results, or error text requires an
+explicit setting and a redaction function.
+
+Install the `otel` extra to use OpenTelemetry spans and metrics:
+
+```bash
+pip install "based-models-agentloop[otel]"
+```
+
+After your application configures OpenTelemetry providers, tracing creates spans for
+conversations, model requests, and local tool calls. Metrics cover conversation outcomes and
+duration, tool calls and failures, tokens, cost, retries, stalls, and limit warnings. Prompt
+and tool content is excluded unless the application explicitly enables capture.
 
 ## Testing and custom providers
 
@@ -229,14 +271,14 @@ explicitly enables it.
 receives. It requires no network, provider account, mocking library, or optional SDK, making
 agent-loop tests deterministic.
 
-Custom integrations implement the small `LLMClient` protocol:
+Custom provider integrations implement three members from the `LLMClient` interface:
 
 - `name`
 - `model`
 - `complete(request) -> ModelResponse`
 
-The provider seam contains no vendor SDK types, so a custom client can be used directly with
-`Agent` and the rest of the package.
+The interface contains no vendor SDK types, so a custom client works directly with `Agent`
+and the rest of the package.
 
 ## Configuration
 
@@ -261,7 +303,11 @@ or another application-owned source.
 
 ## Documentation
 
-Full documentation and examples are coming soon.
+- [Documentation index](https://github.com/based-models/agent-loop/blob/main/docs/index.md)
+- [Conversation summaries](https://github.com/based-models/agent-loop/blob/main/docs/guides/summaries.md)
+- [Event traces](https://github.com/based-models/agent-loop/blob/main/docs/guides/event-trace.md)
+- [OpenTelemetry tracing and metrics](https://github.com/based-models/agent-loop/blob/main/docs/guides/tracing.md)
+- [API reference](https://github.com/based-models/agent-loop/blob/main/docs/api/index.md)
 
 ## Stability and license
 

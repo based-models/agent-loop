@@ -1,7 +1,7 @@
 # `agentloop.providers`
 
-Concrete adapters normalize vendor APIs into `LLMClient`. The package initializer exports
-nothing; import constructors from their modules.
+Built-in provider integrations convert vendor APIs to the shared `LLMClient` interface. The
+package initializer exports nothing; import constructors from their modules.
 
 - [Anthropic](anthropic.md)
 - [OpenAI](openai.md)
@@ -10,4 +10,4 @@ nothing; import constructors from their modules.
 
 The modules `_common` and `_openai_compat` are private implementation details despite being
 importable in Python. Applications should use `Settings`/`build_client`, the concrete public
-constructors, or implement `LLMClient`.
+constructors, or your own `LLMClient` implementation.

@@ -15,9 +15,9 @@ with Agent.from_env(env, tools=[]) as agent:
     print(agent.run("Hello"))
 ```
 
-All adapters implement `LLMClient` and translate to the canonical request, response,
-content, usage, stop-reason, and error types. `build_client` also applies the configured
-retry policy.
+Every provider integration implements `LLMClient` and converts provider data into the same
+request, response, content, usage, stop-reason, and error types. `build_client` also applies
+the configured retry policy.
 
 Concrete constructors are available for applications that need provider-specific options:
 
@@ -32,5 +32,5 @@ with build_openrouter_client(
     print(client.name, client.model)
 ```
 
-See the [provider adapter reference](../api/providers/index.md) or
+See the [provider reference](../api/providers/index.md) or
 [implement a custom provider](custom-providers.md).

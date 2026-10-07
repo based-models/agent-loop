@@ -11,12 +11,15 @@ the [top-level package](agentloop.md); extension authors use the lower-level mod
 | [`agentloop.errors`](errors.md) | Exception hierarchy |
 | [`agentloop.loop`](loop.md) | Core conversation loop |
 | [`agentloop.observer`](observer.md) | Lifecycle callbacks |
-| [`agentloop.provider`](provider.md) | Provider-independent seam and types |
+| [`agentloop.summary`](summary.md) | Conversation outcomes, usage, timing, and limits |
+| [`agentloop.events`](events.md) | Ordered JSONL event traces |
+| [`agentloop.metrics`](metrics.md) | OpenTelemetry counters and histograms |
+| [`agentloop.provider`](provider.md) | Shared request, response, and client types |
 | [`agentloop.retry`](retry.md) | Retry policy and wrapper |
 | [`agentloop.tooling`](tooling.md) | Registry and tool execution |
 | [`agentloop.tracing`](tracing.md) | OpenTelemetry observer and setup |
 | [`agentloop.transcript`](transcript.md) | Conversation messages and parts |
-| [`agentloop.providers`](providers/index.md) | Concrete provider adapters |
+| [`agentloop.providers`](providers/index.md) | Built-in provider integrations |
 
 Pydantic models in this package validate construction. Models described as frozen reject
 attribute assignment after construction.

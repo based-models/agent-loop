@@ -1,7 +1,7 @@
 [project]
 name = "based-models-agentloop"
 version = "0.4.0"
-description = "A provider-agnostic agent loop: transcript, provider seam, tool machinery, retry, tracing."
+description = "A reliable Python agent loop with tools, retries, transcripts, and observability."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"

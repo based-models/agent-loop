@@ -11,12 +11,17 @@ It re-exports:
 - Agent layer: `Agent`, `Deps`, `tool`.
 - Configuration: `Settings`, `build_client`.
 - Errors: `AgentLoopError`, `ToolError`.
-- Loop: `run_conversation`, `ListObserver`.
+- Loop: `run_conversation`, `run_conversation_result`, `ListObserver`.
 - Observers: `LoopObserver`, `NullObserver`, `ConsoleObserver`, `MultiObserver`.
+- Reporting: `ConversationContext`, `ConversationResult`, `ConversationStatus`,
+  `ConversationSummary`, `SummaryCollector`, `SummaryOptions`, `TurnRecord`, and
+  `EventTraceObserver`.
+- Hosted tools: `HostedTool`, `HostedToolPart`, `Source`, `Citation`.
 - Tools: `Registry`, `ToolDeps`, `ToolSpec`, `allow_all`.
-- Transcripts: `Transcript`, `final_text`.
+- Transcripts: `Transcript`, `Origin`, `final_text`, `join_text`.
 
-`__version__` is the installed package version string, currently `"0.1.0"`.
+`__version__` is the installed package version string.
 
-Lower-level types deliberately remain in their defining modules so importing `agentloop`
-does not load optional tracing or provider dependencies.
+Provider-specific clients, the full error hierarchy, retry configuration, OpenTelemetry
+setup, and metrics remain in their defining modules. Importing `agentloop` does not load
+optional provider SDKs or the OpenTelemetry SDK.

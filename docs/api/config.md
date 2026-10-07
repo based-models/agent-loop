@@ -52,7 +52,7 @@ assert settings.model == "gpt-5.1"
 build_client(settings, *, observer=None) -> LLMClient
 ```
 
-Constructs the selected adapter and wraps it in `RetryingClient` using
+Constructs the selected provider client and wraps it in `RetryingClient` using
 `settings.max_attempts`. The optional observer receives retry events. Raises `AuthError` for
 missing required credentials and `ConfigurationError` for incomplete Modal configuration
 or an unsupported provider.

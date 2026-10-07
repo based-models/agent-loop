@@ -1,7 +1,7 @@
 # `agentloop.tracing`
 
-OpenTelemetry implementation of `LoopObserver`. Importing this module needs only the OTel
-API dependency; exporter setup needs the optional `otel` extra.
+OpenTelemetry tracing for agent conversations. Importing this module needs only the
+OpenTelemetry API dependency. Sending traces requires the optional `otel` extra.
 
 ## Constants
 
@@ -20,8 +20,8 @@ OTelObserver(
 )
 ```
 
-Emits a root span for `conversation()`, a child span per model request, and a sibling span
-per tool call. It implements all observer callbacks:
+Creates a top-level span for `conversation()`, a child span for each model request, and a
+span for each local tool call. It implements all observer callbacks:
 
 - `conversation()` manages the root span and reports unhandled failures.
 - `on_request()` starts the current model span.
@@ -34,8 +34,9 @@ per tool call. It implements all observer callbacks:
 With `capture_content=False`, prompts, system instructions, arguments, results, and error
 messages are excluded. With it enabled those values may reach the exporter.
 
-An observer is non-reentrant: overlapping `conversation()` contexts raise `RuntimeError`.
-Tool callbacks themselves are synchronized because tool handlers can run concurrently.
+One observer instance supports one active conversation. Overlapping `conversation()`
+contexts raise `RuntimeError`. Tool callbacks are synchronized because tools can run in
+parallel.
 
 ```python
 observer = OTelObserver(
@@ -51,7 +52,10 @@ observer = OTelObserver(
 configure_tracing(endpoint, *, service_name="agentloop") -> TracerProvider
 ```
 
-Installs a process-global SDK tracer provider with a batched OTLP/HTTP exporter targeting
+Configures the process to send batches of traces over OTLP/HTTP to
 `{endpoint}/v1/traces`. Returns the provider so the application can call `force_flush()` and
-`shutdown()`. Raises `ImportError` with installation guidance if the SDK extra is absent.
-The function does not read `OTEL_*` variables.
+`shutdown()`. Raises `ImportError` with installation guidance if the `otel` extra is absent.
+The function does not read `OTEL_*` environment variables.
+
+Metrics are documented separately in the [`agentloop.metrics` reference](metrics.md) and the
+[tracing and metrics guide](../guides/tracing.md#metrics).

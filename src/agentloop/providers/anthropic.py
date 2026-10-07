@@ -224,6 +224,7 @@ def usage_from_wire(raw: Any) -> Usage:
         output_tokens=getattr(raw, "output_tokens", 0) or 0,
         cache_read_tokens=getattr(raw, "cache_read_input_tokens", None),
         cache_write_tokens=getattr(raw, "cache_creation_input_tokens", None),
+        input_includes_cached=False,  # Anthropic reports cache reads separately
     )
 
 

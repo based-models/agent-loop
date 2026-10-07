@@ -24,7 +24,7 @@ class EchoClient:
         )
 ```
 
-Use it with the ergonomic API:
+Use it directly with `Agent`:
 
 ```python
 from agentloop import Agent
@@ -33,8 +33,8 @@ agent = Agent([], client=EchoClient())
 print(agent.run("hello"))
 ```
 
-Adapters should normalize vendor failures into the
+Custom providers should convert vendor failures into the
 [`ProviderError` hierarchy](../api/errors.md), preserve unknown stop reasons as
-`StopReason.UNKNOWN`, and never expose vendor types in the protocol signature.
+`StopReason.UNKNOWN`, and keep vendor-specific types out of the public method signature.
 
 See the [`provider` API](../api/provider.md).

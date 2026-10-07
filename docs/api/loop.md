@@ -23,12 +23,19 @@ run_conversation(
     max_iterations=50,
     deadline_seconds=600.0,
     observer=None,
+    hosted_tools=(),
+    agent_name=None,
+    conversation_id=None,
+    correlation_id=None,
+    parent_id=None,
+    summary_options=None,
 ) -> Transcript
 ```
 
-Mutates and returns `transcript`. Each iteration sends a canonical `ModelRequest`, appends
-the response, executes requested tools, and appends their results. A response truncated
-mid-tool-call is discarded and retried with a doubled token allowance up to the ceiling.
+Mutates and returns `transcript`. Each iteration sends a provider-independent
+`ModelRequest`, appends the response, executes requested tools, and appends their results. A
+response truncated mid-tool-call is discarded and retried with a doubled token allowance up
+to the ceiling.
 
 The deadline is checked between turns. A provider call, its retries, or a started tool batch
 may finish after it. `None` disables the deadline. Exhaustion raises `LoopBudgetExceeded`;
@@ -41,6 +48,13 @@ transcript = Transcript()
 transcript.add_user_message("hello")
 run_conversation(transcript, client, Registry([]), Deps())
 ```
+
+## `run_conversation_result`
+
+Accepts the same parameters as `run_conversation` and returns a `ConversationResult` with
+`.transcript`, `.summary`, and `.text`. The agent and conversation identifiers label the
+summary. `summary_options` configures the timeline, repeated-call detection, and limit
+warnings. See [Conversation summaries](../guides/summaries.md).
 
 ## `ListObserver`
 

@@ -59,7 +59,7 @@ Builds a flat name-to-tool mapping and caches handler signatures. Construction r
 - `signature(name) -> inspect.Signature`: return the cached signature; raises `KeyError`
   with a descriptive message for an unknown name.
 - `names() -> list[str]`: sorted registered names.
-- `schemas() -> tuple[ToolSchema, ...]`: canonical model-visible schemas in registration
+- `schemas() -> tuple[ToolSchema, ...]`: provider-independent model-visible schemas in registration
   order.
 
 ## `run_tools`
