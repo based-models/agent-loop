@@ -20,7 +20,8 @@ These public helpers convert between shared Agentloop types and the Anthropic AP
 - `request_to_wire(request, *, model) -> dict[str, Any]`: builds a Messages API payload.
 - `usage_from_wire(raw) -> Usage`: normalizes Anthropic usage fields.
 - `response_from_wire(message) -> ModelResponse`: normalizes a response and may raise
-  `ContextLengthExceeded` or `ResponseInvalid`.
+  `ContextLengthExceeded` or `ResponseInvalid`, both with `phase=BODY` and
+  `request_sent=True`: the server answered.
 - `classify_sdk_error(exc) -> ProviderError`: maps an Anthropic SDK exception to the common
   hierarchy.
 
@@ -37,6 +38,7 @@ AnthropicClient(
     api_key=None,
     model="claude-opus-5",
     timeout=600.0,
+    http_client=None,
 )
 ```
 
@@ -45,7 +47,14 @@ chosen model.
 
 - `complete(request) -> ModelResponse`: sends one request with SDK retries disabled and
   translates SDK and credential failures.
-- `close() -> None`: closes the SDK connection pool and is safe to repeat.
+- `close() -> None`: closes the SDK connection pool and is safe to repeat. A client passed
+  as `http_client` is left open.
+
+`http_client` must be an `httpx2.Client`: the Anthropic SDK is built on httpx2, whose
+classes are not httpx's. Any other object, an `httpx.Client` included, raises
+`ConfigurationError`. It carries your trust store, proxy or transport and stays yours to
+close. The SDK follows redirects by default; pass a client with `follow_redirects=False` to
+have a 3xx reported.
 - `__enter__()` returns the client; `__exit__()` closes it.
 
 When `api_key=None`, credential resolution is delegated to the Anthropic SDK.

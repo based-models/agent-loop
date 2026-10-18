@@ -25,7 +25,9 @@ if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at ru
 from agentloop.errors import (
     AuthError,
     BadRequestError,
+    ConfigurationError,
     ContextLengthExceeded,
+    FailurePhase,
     InsufficientCredits,
     ModelNotFound,
     ProviderError,
@@ -42,6 +44,7 @@ from agentloop.provider import (
     Usage,
 )
 from agentloop.providers._common import parse_retry_after
+from agentloop.providers._transport import classify_transport_error, redirect_error
 from agentloop.transcript import (
     ContentPart,
     Message,
@@ -318,6 +321,8 @@ def response_from_wire(
         raise ResponseInvalid(
             f"{provider} returned a response we cannot normalize: {exc}",
             provider=provider,
+            phase=FailurePhase.BODY,
+            request_sent=True,
         ) from exc
 
 
@@ -327,7 +332,10 @@ def _normalize(
     choices = body.get("choices") or []
     if not choices:
         raise ResponseInvalid(
-            f"{provider} returned no choices", provider=provider
+            f"{provider} returned no choices",
+            provider=provider,
+            phase=FailurePhase.BODY,
+            request_sent=True,
         )
     choice = choices[0]
     message = choice.get("message") or {}
@@ -461,7 +469,11 @@ def classify_http_error(
     if status == 429 and _error_markers(response) & _NO_CREDIT_MARKERS:
         # A 429 that retrying cannot fix: the balance will not refill itself.
         return InsufficientCredits(
-            _extract_message(response, quirks), provider=provider, status_code=status
+            _extract_message(response, quirks),
+            provider=provider,
+            status_code=status,
+            phase=FailurePhase.STATUS,
+            request_sent=True,
         )
     return _error_for_code(
         status,
@@ -469,6 +481,8 @@ def classify_http_error(
         provider=provider,
         status_code=status,
         retry_after=parse_retry_after(response.headers.get("retry-after")),
+        phase=FailurePhase.STATUS,
+        request_sent=True,
     )
 
 
@@ -481,9 +495,16 @@ def classify_error_body(error: Any, *, provider: str) -> ProviderError:
         code = error.get("code")
     else:
         message, code = str(error), None
+    # The server answered, so the request was sent whatever the body says.
+    kwargs: dict[str, Any] = {
+        "provider": provider,
+        "status_code": 200,
+        "phase": FailurePhase.BODY,
+        "request_sent": True,
+    }
     if not isinstance(code, int):
-        return ProviderError(message, provider=provider, status_code=200)
-    return _error_for_code(code, message, provider=provider, status_code=200)
+        return ProviderError(message, **kwargs)
+    return _error_for_code(code, message, **kwargs)
 
 
 # --- the codec ---------------------------------------------------------------
@@ -536,15 +557,38 @@ class OpenAICompatClient:
         quirks: Quirks,
         timeout: httpx.Timeout,
         api: Api = "completions",
+        http_client: httpx.Client | None = None,
     ) -> None:
+        """`http_client` is the escape hatch for trust, proxy and transport: build an
+        `httpx.Client` with the `verify`, `proxy` or `transport` you need and pass it in.
+        It stays yours to close. The URL and auth headers are sent per request, so the
+        client needs no `base_url` or default headers; `timeout` is applied per request
+        too, unless the client was given a timeout of its own.
+        """
         self.name = name
         self.model = model
         self._quirks = quirks
         self._codec = codec_for(api)
         self._httpx = _httpx()
-        self._http = self._httpx.Client(
-            base_url=base_url.rstrip("/"), headers=dict(headers), timeout=timeout
-        )
+        self._url = base_url.rstrip("/") + self._codec.path
+        self._headers = dict(headers)
+        self._owns_http = http_client is None
+        if http_client is None:
+            self._http = self._httpx.Client(timeout=timeout)
+            self._timeout: Any = None  # the client carries it already
+        elif not isinstance(http_client, self._httpx.Client):
+            # An httpx2.Client (the Anthropic SDK's) would send, but its errors would
+            # escape `except httpx.HTTPError` unclassified.
+            kind = type(http_client)
+            raise ConfigurationError(
+                f"the {name} provider needs an httpx.Client for http_client, not "
+                f"{kind.__module__}.{kind.__qualname__}"
+            )
+        else:
+            self._http = http_client
+            # httpx's own default means "the caller did not choose one".
+            chose_own = http_client.timeout != self._httpx.Timeout(5.0)
+            self._timeout = None if chose_own else timeout
 
     @property
     def api(self) -> Api:
@@ -560,34 +604,52 @@ class OpenAICompatClient:
             request, model=self.model, quirks=self._quirks, provider=self.name
         )
         try:
-            response = self._http.post(codec.path, json=payload)
-        except self._httpx.TimeoutException as exc:
-            raise ProviderTimeout(str(exc), provider=self.name) from exc
+            extra = {} if self._timeout is None else {"timeout": self._timeout}
+            response = self._http.post(
+                self._url, json=payload, headers=self._headers, **extra
+            )
         except self._httpx.HTTPError as exc:
-            raise ProviderUnavailable(str(exc), provider=self.name) from exc
+            raise classify_transport_error(exc, provider=self.name) from exc
 
-        if response.status_code >= 400:
+        status = response.status_code
+        if status >= 400:
             raise classify_http_error(
                 response, provider=self.name, quirks=self._quirks
+            )
+        if 300 <= status < 400:
+            # Not followed (see UnexpectedRedirect), and never a JSON answer: a
+            # proxy or login page would otherwise be misread as a bad 200.
+            raise redirect_error(
+                status, response.headers.get("location"), provider=self.name
             )
         try:
             body = response.json()
         except ValueError as exc:
             raise ResponseInvalid(
-                f"{self.name} returned a 200 whose body is not JSON: "
+                f"{self.name} returned a {status} whose body is not JSON: "
                 f"{response.text[:ERROR_DETAIL_CHARS]!r}",
                 provider=self.name,
+                status_code=status,
+                phase=FailurePhase.BODY,
+                request_sent=True,
             ) from exc
         if not isinstance(body, Mapping):
             raise ResponseInvalid(
-                f"{self.name} returned a 200 whose body is not an object",
+                f"{self.name} returned a {status} whose body is not an object",
                 provider=self.name,
+                status_code=status,
+                phase=FailurePhase.BODY,
+                request_sent=True,
             )
         return codec.response_from_wire(body, provider=self.name, quirks=self._quirks)
 
     def close(self) -> None:
-        """Release the connection pool. Safe to call more than once."""
-        self._http.close()
+        """Release the connection pool. Safe to call more than once.
+
+        A client passed in as `http_client` is left open: it is the caller's.
+        """
+        if self._owns_http:
+            self._http.close()
 
     def __enter__(self) -> OpenAICompatClient:
         return self

@@ -27,7 +27,7 @@ IDS = [str(path.relative_to(CORE)) for path in SOURCES]
 
 # --- seam 1: vendors. NOT pydantic (data modelling, no provider opinion) and NOT
 # opentelemetry (its API package is a no-op without an SDK).
-BANNED = {"anthropic", "openai", "httpx", "requests"}
+BANNED = {"anthropic", "openai", "httpx", "httpx2", "requests"}
 
 # --- seam 2: the machine. Every root package agentloop may import at module scope.
 # If a new import touches the filesystem, a process or a socket, it does not belong
@@ -56,7 +56,7 @@ CORE_ALLOWED = {
 
 # providers/ additionally gets the wire.
 PROVIDER_ALLOWED = CORE_ALLOWED | {
-    "anthropic", "httpx",
+    "anthropic", "httpx", "httpx2",  # httpx2: the HTTP stack under the Anthropic SDK
     "dataclasses",      # Quirks in the OpenAI-compatible adapter
     "json",             # wire (de)serialisation
     "types",            # SimpleNamespace

@@ -205,6 +205,11 @@ class Agent:
         YOU supply the mapping -- `Agent.from_env(os.environ, ...)`. There is no
         default, deliberately: a library that reads the process environment on its
         own surprises everyone who depends on it.
+
+        Pass `http_client=` for a custom trust store, proxy or transport: an
+        `httpx2.Client` for anthropic (its SDK is built on httpx2), an `httpx.Client`
+        for the others. The wrong one raises `ConfigurationError`. It stays yours to
+        close; `close()` here does not touch it.
         """
         from agentloop.config import Settings, build_client
 
@@ -219,7 +224,9 @@ class Agent:
                 model=settings.model,
                 name=kwargs.get("name", "agentloop"),
             )
-        client = build_client(settings, observer=observer)
+        client = build_client(
+            settings, observer=observer, http_client=kwargs.pop("http_client", None)
+        )
         agent = cls(tools, client=client, observer=observer, **kwargs)
         agent._owns_client = True
         return agent

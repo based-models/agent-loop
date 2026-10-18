@@ -35,7 +35,7 @@ class LoopObserver(Protocol):
     def on_tool_start(self, call: ToolCallPart) -> None: ...
     def on_tool_end(self, call: ToolCallPart, result: ToolResultPart) -> None: ...
 
-    # The three below are OPTIONAL: an observer that does not define one is simply not
+    # The hooks below are OPTIONAL: an observer that does not define one is simply not
     # told, so observers written before they existed keep working.
 
     def on_conversation_start(self, context: ConversationContext) -> None:
@@ -52,6 +52,15 @@ class LoopObserver(Protocol):
 
     def on_stall(self, tool_name: str, count: int) -> None:
         """One tool was called with identical arguments `count` times (the threshold)."""
+        ...
+
+    def on_model_error(self, error: Exception) -> None:
+        """A model call failed for good: not retryable, or retries exhausted.
+
+        Fires once per failed call, before the exception leaves the loop and before
+        `on_conversation_end`. Unlike `on_retry`, it covers the final attempt. A
+        `ProviderError` carries `phase`, `request_sent` and `attempt_log`.
+        """
         ...
 
     # Reserved for streaming / a TUI. Unused today.
@@ -89,6 +98,9 @@ class NullObserver:
         pass
 
     def on_stall(self, tool_name: str, count: int) -> None:
+        pass
+
+    def on_model_error(self, error: Exception) -> None:
         pass
 
     def on_text_delta(self, text: str) -> None:
@@ -170,6 +182,10 @@ class MultiObserver(NullObserver):
         for observer in self._observers:
             observer.on_stall(tool_name, count)
 
+    def on_model_error(self, error: Exception) -> None:
+        for observer in self._observers:
+            observer.on_model_error(error)
+
     def on_text_delta(self, text: str) -> None:
         for observer in self._observers:
             observer.on_text_delta(text)
@@ -232,6 +248,9 @@ class GuardedObserver:
 
     def on_stall(self, tool_name: str, count: int) -> None:
         self._optionally("on_stall", tool_name, count)
+
+    def on_model_error(self, error: Exception) -> None:
+        self._optionally("on_model_error", error)
 
     def on_text_delta(self, text: str) -> None:
         self._safely("on_text_delta", text)

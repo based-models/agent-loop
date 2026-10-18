@@ -42,10 +42,10 @@ tests and debugging. If a callback fails, the library logs the failure and conti
 conversation. An exception raised while starting an observer is returned to the caller
 because agent work has not begun.
 
-Four callbacks are optional, so older observers continue to work:
-`on_conversation_start`, `on_conversation_end`, `on_budget_warning` and `on_stall`. They
-carry the run's identifiers, its `ConversationSummary`, and the optional warnings described
-in [Conversation summaries](summaries.md). To keep a JSONL record of everything, see the
+Five callbacks are optional, so older observers continue to work:
+`on_conversation_start`, `on_conversation_end`, `on_budget_warning`, `on_stall` and
+`on_model_error`. They carry the run's identifiers, its `ConversationSummary`, the optional
+warnings described in [Conversation summaries](summaries.md), and a failed call's error. To keep a JSONL record of everything, see the
 [event trace](event-trace.md).
 
 See the [`observer` API](../api/observer.md).

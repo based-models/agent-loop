@@ -18,12 +18,15 @@ build_modal_client(
     model="Qwen/Qwen3.6-35B-A3B-FP8",
     proxy_token_id="",
     proxy_token_secret="",
+    http_client=None,
 ) -> OpenAICompatClient
 ```
 
 Appends `/v1` to `endpoint_url` after removing trailing slashes. Proxy credentials are used
 only when both values are nonempty. `Settings` enforces the both-or-neither rule; this
-low-level constructor itself treats an incomplete pair as unauthenticated.
+low-level constructor itself treats an incomplete pair as unauthenticated. `http_client` is
+an `httpx.Client` carrying your trust store, proxy or transport; it stays yours to close, and
+anything else raises `ConfigurationError`.
 
 ```python
 client = build_modal_client(

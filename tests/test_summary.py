@@ -776,3 +776,109 @@ def test_agent_options_reach_every_run() -> None:
         summary_options=SummaryOptions(timeline=True),
     )
     assert agent.run_result("go").summary.timeline is not None
+
+
+# --- failed provider calls ---
+
+
+def test_a_failed_call_reports_its_real_attempts_and_whether_it_was_sent() -> None:
+    from agentloop.errors import FailurePhase, ProviderUnreachable
+    error = ProviderUnreachable(
+        "tls", provider="p", phase=FailurePhase.TLS, request_sent=False, request_id="req-9"
+    )
+    client = RetryingClient(FakeClient(error), policy=RetryPolicy(base_delay=0.01))
+    with pytest.raises(ProviderUnreachable) as caught:
+        run_conversation_result(
+            transcript(), client, REGISTRY, ToyDeps(), summary_options=SummaryOptions(timeline=True)
+        )
+    summary = caught.value.summary
+    assert summary is not None
+    assert summary.error_phase is FailurePhase.TLS
+    assert summary.error_request_sent is False
+    assert summary.error_request_id == "req-9"
+    assert summary.error_attempts_sent == 0  # nothing reached the provider
+    assert summary.failed_attempts[0].error_type == "ProviderUnreachable"
+    assert summary.failed_attempts[0].count == 1
+    assert summary.timeline is not None
+    assert summary.timeline[0].attempts == 1
+    assert summary.timeline[0].attempt_log[0].phase is FailurePhase.TLS
+
+
+def test_a_retried_failure_is_counted_and_the_turn_shows_every_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agentloop.errors import FailurePhase, ProviderUnavailable
+    monkeypatch.setattr("agentloop.retry.time.sleep", lambda _: None)
+    reset = ProviderUnavailable("reset", phase=FailurePhase.READ, request_sent=True)
+    client = RetryingClient(
+        FakeClient(reset, resp(TextPart(text="ok"))), policy=RetryPolicy(base_delay=0.01)
+    )
+    summary = run_conversation_result(
+        transcript(), client, REGISTRY, ToyDeps(), summary_options=SummaryOptions(timeline=True)
+    ).summary
+    assert summary.provider_retries == 1
+    assert [(f.error_type, f.phase, f.request_sent, f.count) for f in summary.failed_attempts] == [
+        ("ProviderUnavailable", FailurePhase.READ, True, 1)
+    ]
+    assert summary.timeline is not None
+    assert summary.timeline[0].attempts == 2
+    assert len(summary.timeline[0].attempt_log) == 2
+    assert summary.error_attempts_sent is None  # the run succeeded
+
+
+def test_an_unknown_send_state_stays_unknown_in_the_summary() -> None:
+    from agentloop.errors import ProviderUnavailable
+
+    with pytest.raises(ProviderUnavailable) as caught:
+        converse(FakeClient(ProviderUnavailable("odd")))
+    assert caught.value.summary is not None
+    assert caught.value.summary.error_request_sent is None
+
+
+class ErrorHookObserver(NullObserver):
+    def __init__(self) -> None:
+        self.errors: list[Exception] = []
+
+    def on_model_error(self, error: Exception) -> None:
+        self.errors.append(error)
+
+
+def test_on_model_error_fires_once_for_a_failed_call() -> None:
+    observer = ErrorHookObserver()
+    error = ProviderUnavailable("down")
+    with pytest.raises(ProviderUnavailable):
+        run_conversation_result(
+            transcript(), FakeClient(error), REGISTRY, ToyDeps(), observer=observer
+        )
+    assert observer.errors == [error]
+
+
+def test_on_model_error_does_not_fire_for_a_successful_run() -> None:
+    observer = ErrorHookObserver()
+    run_conversation_result(
+        transcript(), FakeClient(resp(TextPart(text="x"))), REGISTRY, ToyDeps(),
+        observer=observer,
+    )
+    assert observer.errors == []
+
+
+def test_an_observer_without_on_model_error_is_skipped_quietly(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Legacy:
+        def conversation(self) -> AbstractContextManager[None]:
+            return nullcontext()
+
+        def on_request(self, request: ModelRequest) -> None: ...
+        def on_response(self, response: ModelResponse) -> None: ...
+        def on_retry(self, attempt: int, error: Exception) -> None: ...
+        def on_tool_start(self, call: ToolCallPart) -> None: ...
+        def on_tool_end(self, call: ToolCallPart, result: ToolResultPart) -> None: ...
+        def on_text_delta(self, text: str) -> None: ...
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ProviderUnavailable):
+        run_conversation_result(
+            transcript(), FakeClient(ProviderUnavailable("down")), REGISTRY, ToyDeps(),
+            observer=Legacy(),  # type: ignore[arg-type]
+        )
+    assert not caplog.records

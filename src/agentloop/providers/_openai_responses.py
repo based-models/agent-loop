@@ -27,7 +27,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from agentloop.errors import ProviderError, ProviderUnavailable, RateLimited, ResponseInvalid
+from agentloop.errors import (
+    FailurePhase,
+    ProviderError,
+    ProviderUnavailable,
+    RateLimited,
+    ResponseInvalid,
+)
 from agentloop.provider import (
     HostedTool,
     ModelRequest,
@@ -313,7 +319,12 @@ def _error_from_body(error: Any, *, provider: str) -> ProviderError:
     else:
         code, message = None, str(error)
     return _RETRYABLE_CODES.get(str(code), ProviderError)(
-        message, provider=provider, status_code=200
+        message,
+        provider=provider,
+        status_code=200,
+        # A failed body is still an answer: the request was sent.
+        phase=FailurePhase.BODY,
+        request_sent=True,
     )
 
 
@@ -330,6 +341,8 @@ def response_from_wire(
             f"{provider} returned a response we cannot normalize "
             f"(status={body.get('status')!r}): {exc}",
             provider=provider,
+            phase=FailurePhase.BODY,
+            request_sent=True,
         ) from exc
 
 
@@ -337,7 +350,12 @@ def _normalize(body: Mapping[str, Any], *, provider: str, quirks: Quirks) -> Mod
     status = body.get("status")
     if status not in ("completed", "incomplete"):
         # queued / in_progress / cancelled: nothing a stateless call can use.
-        raise ResponseInvalid(f"{provider} returned status {status!r}", provider=provider)
+        raise ResponseInvalid(
+            f"{provider} returned status {status!r}",
+            provider=provider,
+            phase=FailurePhase.BODY,
+            request_sent=True,
+        )
     model = body.get("model", "")
     items = [dict(item) for item in body.get("output") or ()]
     parts, refused = _parts_from_items(items, provider=provider, model=model)

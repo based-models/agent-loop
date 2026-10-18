@@ -216,3 +216,42 @@ def test_build_client_speaks_the_configured_openai_api(api: str, hosted: set[str
     client = build_client(settings(provider="openai", openai_api_key="sk-x", openai_api=api))
     assert client.hosted_tools == frozenset(hosted)  # type: ignore[attr-defined]
     assert client.api == api                         # type: ignore[attr-defined]
+
+
+# --- one http_client for every provider: the wrong package is named, not a TypeError ---
+
+
+def test_an_httpx_client_with_anthropic_is_a_configuration_error() -> None:
+    import httpx
+
+    http = httpx.Client()
+    with pytest.raises(ConfigurationError, match="httpx2.Client"):
+        build_client(
+            settings(provider="anthropic", anthropic_api_key="sk-ant-x"),
+            http_client=http,
+        )
+    http.close()
+
+
+def test_an_httpx2_client_with_an_openai_compatible_provider_is_a_configuration_error() -> None:
+    import httpx2
+
+    http = httpx2.Client()
+    with pytest.raises(ConfigurationError, match="openrouter provider needs an httpx.Client"):
+        build_client(
+            settings(provider="openrouter", openrouter_api_key="sk-or-x"),
+            http_client=http,
+        )
+    http.close()
+
+
+def test_an_httpx2_client_reaches_anthropic() -> None:
+    import httpx2
+
+    http = httpx2.Client()
+    client = build_client(
+        settings(provider="anthropic", anthropic_api_key="sk-ant-x"), http_client=http
+    )
+    client.close()  # type: ignore[attr-defined]
+    assert not http.is_closed  # still the caller's
+    http.close()

@@ -32,5 +32,44 @@ with build_openrouter_client(
     print(client.name, client.model)
 ```
 
+## Corporate networks: trust, proxy and transport
+
+The library never reads certificates or builds a trust store. Pass an HTTP client you
+configured, and it carries your settings for every request. It stays yours to close: closing
+the agent or the provider client leaves it open.
+
+OpenAI, OpenRouter and Modal take an `httpx.Client`. Anthropic takes an `httpx2.Client`,
+because the Anthropic SDK is built on httpx2, whose classes are not httpx's. Both packages
+take the same `verify`, `proxy` and `transport` arguments. Passing the wrong one raises
+`ConfigurationError` naming the package the provider needs.
+
+```python
+import ssl
+
+import httpx
+import truststore
+
+from agentloop import Agent
+
+context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # the operating system's trust store
+http = httpx.Client(verify=context, proxy="http://proxy.corp.example:8080")
+
+with Agent.from_env(env, tools=[], http_client=http) as agent:
+    print(agent.run("Hello"))
+http.close()
+```
+
+For `LLM_PROVIDER=anthropic`, build the same client with `httpx2.Client(...)` instead.
+
+The same `http_client=` is accepted by `build_client`, the provider builders and
+`AnthropicClient`. Without it, the HTTP package's environment variables (`HTTPS_PROXY`,
+`SSL_CERT_FILE`) still apply. The adapter sends its URL and credentials per request, so your client needs no
+`base_url` or default headers; its own timeout wins if you set one.
+
+Redirects are not followed on the clients the library builds, because that would resend your
+credentials to another host: a 3xx raises `UnexpectedRedirect`. The Anthropic SDK follows
+redirects by default; pass a client with `follow_redirects=False` if you want one reported.
+A TLS, DNS or proxy failure raises `ProviderUnreachable` immediately, without retries.
+
 See the [provider reference](../api/providers/index.md) or
 [implement a custom provider](custom-providers.md).

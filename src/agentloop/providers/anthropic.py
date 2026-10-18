@@ -17,7 +17,9 @@ from pydantic import ValidationError
 from agentloop.errors import (
     AuthError,
     BadRequestError,
+    ConfigurationError,
     ContextLengthExceeded,
+    FailurePhase,
     ModelNotFound,
     ProviderError,
     ProviderTimeout,
@@ -38,6 +40,7 @@ from agentloop.providers._common import (
     user_location,
     web_search_options,
 )
+from agentloop.providers._transport import classify_transport_error
 from agentloop.transcript import (
     Citation,
     ContentPart,
@@ -53,6 +56,7 @@ from agentloop.transcript import (
 
 if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
     import anthropic
+    import httpx2
 
 logger = logging.getLogger(__name__)
 
@@ -340,6 +344,8 @@ def response_from_wire(message: Any) -> ModelResponse:
             "input exceeded the model's context window",
             provider=PROVIDER,
             status_code=200,
+            phase=FailurePhase.BODY,
+            request_sent=True,
         )
 
     blocks = [_as_dict(block) for block in message.content]
@@ -349,6 +355,8 @@ def response_from_wire(message: Any) -> ModelResponse:
         raise ResponseInvalid(
             f"Anthropic returned a content block we cannot read: {exc}",
             provider=PROVIDER,
+            phase=FailurePhase.BODY,
+            request_sent=True,
         ) from exc
 
     stop = _STOP.get(message.stop_reason, StopReason.UNKNOWN)
@@ -371,6 +379,8 @@ def response_from_wire(message: Any) -> ModelResponse:
         raise ResponseInvalid(
             f"Anthropic returned a response we cannot normalize: {exc}",
             provider=PROVIDER,
+            phase=FailurePhase.BODY,
+            request_sent=True,
         ) from exc
 
 
@@ -385,13 +395,16 @@ def classify_sdk_error(exc: Exception) -> ProviderError:
     """
     sdk = _sdk()
     message = str(exc)
-    if isinstance(exc, sdk.APITimeoutError):  # before its parent, APIConnectionError
-        return ProviderTimeout(message, provider=PROVIDER)
-    if isinstance(exc, sdk.APIConnectionError):
-        return ProviderUnavailable(message, provider=PROVIDER)
+    if isinstance(exc, sdk.APIConnectionError):  # APITimeoutError is a subclass
+        error = classify_transport_error(exc, provider=PROVIDER)
+        if isinstance(exc, sdk.APITimeoutError) and not isinstance(error, ProviderTimeout):
+            return ProviderTimeout(message, provider=PROVIDER)
+        return error
     if not isinstance(exc, sdk.APIStatusError):
         # A 2xx the SDK could not parse, and anything else it raises.
-        return ResponseInvalid(message, provider=PROVIDER)
+        return ResponseInvalid(
+            message, provider=PROVIDER, phase=FailurePhase.BODY, request_sent=True
+        )
 
     status = exc.status_code
     kwargs: dict[str, Any] = {
@@ -399,6 +412,8 @@ def classify_sdk_error(exc: Exception) -> ProviderError:
         "status_code": status,
         "retry_after": parse_retry_after(exc.response.headers.get("retry-after")),
         "request_id": exc.request_id,
+        "phase": FailurePhase.STATUS,
+        "request_sent": True,
     }
     if status in (401, 403):
         return AuthError(message, **kwargs)
@@ -420,6 +435,29 @@ def classify_sdk_error(exc: Exception) -> ProviderError:
 # --- the client --------------------------------------------------------------
 
 
+def _check_http_client(sdk: Any, http_client: object) -> None:
+    """Refuse a client from the wrong HTTP package, naming the right one.
+
+    Current SDKs are built on httpx2 and older ones on httpx, so the expected class is
+    read from the installed SDK. The SDK itself raises a bare TypeError; this is a
+    configuration mistake, and an easy one, since build_client takes one client for
+    every provider.
+    """
+    default = getattr(sdk, "DefaultHttpxClient", None)
+    expected = next(
+        (c for c in getattr(default, "__mro__", ()) if c.__name__ == "Client"), None
+    )
+    if expected is None or isinstance(http_client, expected):
+        return
+    package = expected.__module__.split(".")[0]
+    kind = type(http_client)
+    raise ConfigurationError(
+        f"the Anthropic provider needs an {package}.Client for http_client, not "
+        f"{kind.__module__}.{kind.__qualname__}: the installed Anthropic SDK is built on "
+        f"{package}, whose classes are not interchangeable with another package's"
+    )
+
+
 class AnthropicClient:
     """An LLMClient backed by the Anthropic Messages API."""
 
@@ -433,8 +471,16 @@ class AnthropicClient:
         api_key: str | None = None,
         model: str = DEFAULT_MODEL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        http_client: httpx2.Client | None = None,
     ) -> None:
+        """`http_client` carries trust, proxy and transport settings, as on the
+        OpenAI-compatible clients, but it must be an `httpx2.Client`: the SDK is built
+        on httpx2. It stays yours to close. The SDK follows redirects by default; set
+        `follow_redirects=False` on your client if you need a 3xx reported.
+        """
         sdk = _sdk()
+        if http_client is not None:
+            _check_http_client(sdk, http_client)
         self.model = model
         # api_key=None lets the SDK resolve credentials itself:
         # ANTHROPIC_API_KEY -> ANTHROPIC_AUTH_TOKEN -> an `ant auth login` profile.
@@ -443,9 +489,12 @@ class AnthropicClient:
         # max_retries=0: RetryingClient owns retries for every provider, so they are
         # observable and `max_attempts` means the same thing everywhere.
         self._client: anthropic.Anthropic = sdk.Anthropic(
-            api_key=api_key, timeout=timeout, max_retries=0
+            api_key=api_key, timeout=timeout, max_retries=0, http_client=http_client
         )
         self._sdk = sdk
+        # The SDK's close() closes whatever HTTP client it holds, the caller's included,
+        # so close() calls it only when the SDK built its own.
+        self._owns_http = http_client is None
 
     def complete(self, request: ModelRequest) -> ModelResponse:
         payload = request_to_wire(request, model=self.model)
@@ -463,8 +512,12 @@ class AnthropicClient:
         return response_from_wire(message)
 
     def close(self) -> None:
-        """Release the connection pool. Safe to call more than once."""
-        self._client.close()
+        """Release the connection pool. Safe to call more than once.
+
+        A client passed in as `http_client` is left open: it is the caller's.
+        """
+        if self._owns_http:
+            self._client.close()
 
     def __enter__(self) -> AnthropicClient:
         return self

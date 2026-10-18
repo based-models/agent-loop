@@ -22,12 +22,13 @@ from agentloop.observer import (
     MultiObserver,
     NullObserver,
 )
-from agentloop.provider import HostedTool
+from agentloop.provider import AttemptRecord, HostedTool
 from agentloop.summary import (
     ConversationContext,
     ConversationResult,
     ConversationStatus,
     ConversationSummary,
+    FailureCount,
     SummaryOptions,
     TurnRecord,
 )
@@ -47,6 +48,7 @@ __version__ = "0.5.0"
 __all__ = [
     "Agent",
     "AgentLoopError",
+    "AttemptRecord",
     "Citation",
     "ConsoleObserver",
     "ConversationContext",
@@ -55,6 +57,7 @@ __all__ = [
     "ConversationSummary",
     "Deps",
     "EventTraceObserver",
+    "FailureCount",
     "HostedTool",
     "HostedToolPart",
     "ListObserver",

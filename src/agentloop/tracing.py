@@ -41,6 +41,16 @@ DEFAULT_AGENT_NAME = "agentloop"
 ERROR_DETAIL_CHARS = 200
 
 
+def _failure_attributes(error: ProviderError, *, prefix: str) -> dict[str, Any]:
+    """Phase and send state as span attributes; None (unknown) is omitted, never False."""
+    attributes: dict[str, Any] = {}
+    if error.phase is not None:
+        attributes[f"{prefix}.phase"] = str(error.phase)
+    if error.request_sent is not None:
+        attributes[f"{prefix}.request_sent"] = error.request_sent
+    return attributes
+
+
 class OTelObserver:
     """Emits one root span per conversation, a child per model request, and a
     sibling per tool call. Retries become events on the model span.
@@ -199,6 +209,9 @@ class OTelObserver:
             span.set_attribute(
                 "agentloop.response.raw_stop_reason", response.raw_stop_reason
             )
+        span.set_attribute("agentloop.attempts", response.attempts)
+        if response.request_id:
+            span.set_attribute("gen_ai.response.id", response.request_id)
         # A count, never the queries: those are content (see capture_content).
         hosted = sum(isinstance(part, HostedToolPart) for part in response.content)
         if hosted:
@@ -214,12 +227,23 @@ class OTelObserver:
             "agentloop.retry.attempt": attempt,
             "agentloop.retry.error_type": type(error).__name__,
         }
-        if isinstance(error, ProviderError) and error.status_code is not None:
-            attributes["http.response.status_code"] = error.status_code
+        if isinstance(error, ProviderError):
+            if error.status_code is not None:
+                attributes["http.response.status_code"] = error.status_code
+            attributes.update(_failure_attributes(error, prefix="agentloop.retry"))
         if self._capture:
             # A provider's 400 can quote the request back, so this is content.
             attributes["agentloop.retry.message"] = str(error)[:ERROR_DETAIL_CHARS]
         self._model_span.add_event("retry", attributes)
+
+    def on_model_error(self, error: Exception) -> None:
+        """Describe the failed call on its span, which is still open: `error.type` and
+        the status are added when the exception reaches the root span's handler."""
+        span = self._model_span
+        if span is None or not isinstance(error, ProviderError):
+            return
+        span.set_attribute("agentloop.attempts", error.attempts)
+        span.set_attributes(_failure_attributes(error, prefix="agentloop.error"))
 
     # --- tools ---
 
@@ -318,6 +342,14 @@ class OTelObserver:
             "agentloop.conversation.deadline_seconds": summary.deadline_seconds,
             "agentloop.usage.cost_usd": summary.usage.cost_usd,
             "agentloop.usage.cache_hit_rate": summary.cache_hit_rate,
+            "http.response.status_code": summary.provider_status_code,
+            "agentloop.error.type": summary.error_type,
+            "agentloop.error.phase": (
+                str(summary.error_phase) if summary.error_phase is not None else None
+            ),
+            "agentloop.error.request_sent": summary.error_request_sent,
+            "agentloop.error.attempts_sent": summary.error_attempts_sent,
+            "agentloop.error.request_id": summary.error_request_id,
         }
         attributes.update({k: v for k, v in optional.items() if v is not None})
         # One flat attribute per tool: OTel attribute values cannot be maps.

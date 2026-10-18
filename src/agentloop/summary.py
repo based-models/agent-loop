@@ -19,7 +19,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-from agentloop.provider import Usage
+from agentloop.errors import FailurePhase
+from agentloop.provider import AttemptRecord, Usage
 from agentloop.transcript import Transcript, final_text
 
 
@@ -95,6 +96,20 @@ class ConversationContext(BaseModel):
     deadline_seconds: float | None = None
 
 
+class FailureCount(BaseModel):
+    """How many provider attempts failed in one way. Names, enums and a count only.
+
+    `request_sent` keeps its three states: None is "unknown", not "no".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    error_type: str
+    phase: FailurePhase | None = None
+    request_sent: bool | None = None
+    count: int = Field(ge=1)
+
+
 class TurnRecord(BaseModel):
     """One model call and the tools it led to. Content-free, like the summary."""
 
@@ -109,6 +124,8 @@ class TurnRecord(BaseModel):
     output_tokens: int = 0
     cost_usd: float | None = None
     attempts: int = 1
+    # Per-attempt detail; empty when the first attempt succeeded.
+    attempt_log: tuple[AttemptRecord, ...] = ()
     # A turn cut off mid tool call: dropped from the transcript and retried.
     discarded: bool = False
     tools: tuple[str, ...] = ()
@@ -172,6 +189,16 @@ class ConversationSummary(BaseModel):
     # Type name only. The message may quote arguments or code; see the module docstring.
     error_type: str | None = None
     provider_status_code: int | None = None
+    # About the call that ended the run, when it was a provider failure. Copied from
+    # the error: `error_request_sent` None means the adapter could not tell, and
+    # `error_attempts_sent` counts attempts that may have reached the provider (so
+    # 0 means nothing was billed). None when no attempt log was recorded.
+    error_phase: FailurePhase | None = None
+    error_request_sent: bool | None = None
+    error_request_id: str | None = None
+    error_attempts_sent: int | None = None
+    # Every failed provider attempt in the run, retried or not, grouped.
+    failed_attempts: tuple[FailureCount, ...] = ()
 
     @computed_field  # type: ignore[prop-decorator]
     @property

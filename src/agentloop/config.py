@@ -10,9 +10,13 @@ Provider SDKs are imported lazily so a single-extra install stays importable.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+
+if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
+    import httpx
+    import httpx2
 
 from agentloop.errors import AuthError, ConfigurationError
 from agentloop.observer import LoopObserver
@@ -121,20 +125,30 @@ class Settings(BaseModel):
 
 
 def build_client(
-    settings: Settings, *, observer: LoopObserver | None = None
+    settings: Settings,
+    *,
+    observer: LoopObserver | None = None,
+    http_client: httpx.Client | httpx2.Client | None = None,
 ) -> LLMClient:
-    """Construct the configured provider's client, ready to use."""
+    """Construct the configured provider's client, ready to use.
+
+    `http_client` carries your trust store, proxy or transport; it stays yours to close.
+    It is an `httpx2.Client` for anthropic (its SDK is built on httpx2) and an
+    `httpx.Client` for the others; the wrong one raises `ConfigurationError`.
+    """
+    # The helpers take the client untyped: each provider constructor checks the package
+    # itself and raises ConfigurationError for the wrong one.
     inner: LLMClient
     match settings.provider:
         case "anthropic":
             # Wrapped like the others; the SDK's own retries are off (max_retries=0).
-            inner = _build_anthropic(settings)
+            inner = _build_anthropic(settings, http_client)
         case "openrouter":
-            inner = _build_openrouter(settings)
+            inner = _build_openrouter(settings, http_client)
         case "modal":
-            inner = _build_modal(settings)
+            inner = _build_modal(settings, http_client)
         case "openai":
-            inner = _build_openai(settings)
+            inner = _build_openai(settings, http_client)
         case _:
             raise ConfigurationError(f"unsupported provider: {settings.provider!r}")
 
@@ -145,7 +159,7 @@ def build_client(
     )
 
 
-def _build_anthropic(settings: Settings) -> LLMClient:
+def _build_anthropic(settings: Settings, http_client: Any) -> LLMClient:
     from agentloop.providers.anthropic import AnthropicClient  # lazy: keeps the extra optional
 
     key = settings.anthropic_api_key
@@ -153,10 +167,11 @@ def _build_anthropic(settings: Settings) -> LLMClient:
         # None lets the SDK resolve credentials itself.
         api_key=key.get_secret_value() if key else None,
         model=settings.anthropic_model,
+        http_client=http_client,
     )
 
 
-def _build_openrouter(settings: Settings) -> LLMClient:
+def _build_openrouter(settings: Settings, http_client: Any) -> LLMClient:
     from agentloop.providers.openrouter import build_openrouter_client
 
     if settings.openrouter_api_key is None:
@@ -164,10 +179,11 @@ def _build_openrouter(settings: Settings) -> LLMClient:
     return build_openrouter_client(
         api_key=settings.openrouter_api_key.get_secret_value(),
         model=settings.openrouter_model,
+        http_client=http_client,
     )
 
 
-def _build_modal(settings: Settings) -> LLMClient:
+def _build_modal(settings: Settings, http_client: Any) -> LLMClient:
     from agentloop.providers.modal import build_modal_client
 
     if not settings.modal_endpoint_url:
@@ -186,10 +202,11 @@ def _build_modal(settings: Settings) -> LLMClient:
         model=settings.modal_endpoint_model,
         proxy_token_id=token_id.get_secret_value() if token_id else "",
         proxy_token_secret=token_secret.get_secret_value() if token_secret else "",
+        http_client=http_client,
     )
 
 
-def _build_openai(settings: Settings) -> LLMClient:
+def _build_openai(settings: Settings, http_client: Any) -> LLMClient:
     from agentloop.providers.openai import build_openai_client
 
     if settings.openai_api_key is None:
@@ -198,4 +215,5 @@ def _build_openai(settings: Settings) -> LLMClient:
         api_key=settings.openai_api_key.get_secret_value(),
         model=settings.openai_model,
         api=settings.openai_api,
+        http_client=http_client,
     )

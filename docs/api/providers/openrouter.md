@@ -18,11 +18,13 @@ build_openrouter_client(
     model="openrouter/free",
     app_url=None,
     app_name=None,
+    http_client=None,
 ) -> OpenAICompatClient
 ```
 
 Constructs an `LLMClient` named `openrouter`. `app_url` and `app_name` set OpenRouter's
-optional attribution headers.
+optional attribution headers. `http_client` is an `httpx.Client` carrying your trust store,
+proxy or transport; it stays yours to close, and anything else raises `ConfigurationError`.
 
 ```python
 client = build_openrouter_client(

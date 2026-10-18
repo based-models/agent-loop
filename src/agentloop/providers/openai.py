@@ -8,6 +8,11 @@ Responses codec is stateless.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
+    import httpx
+
 from agentloop.providers._openai_compat import (
     Api,
     OpenAICompatClient,
@@ -32,6 +37,7 @@ def build_openai_client(
     organization: str | None = None,
     project: str | None = None,
     api: Api = "responses",
+    http_client: httpx.Client | None = None,
 ) -> OpenAICompatClient:
     headers = {"Authorization": f"Bearer {api_key}"}
     if organization:
@@ -45,5 +51,6 @@ def build_openai_client(
         headers=headers,
         quirks=QUIRKS,
         timeout=httpx_timeout(**TIMEOUT_SECONDS),
+        http_client=http_client,
         api=api,
     )

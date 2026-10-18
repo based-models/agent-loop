@@ -195,9 +195,34 @@ class EventTraceObserver(NullObserver):
             "error_type": type(error).__name__,
             "status_code": error.status_code if isinstance(error, ProviderError) else None,
         }
+        if isinstance(error, ProviderError):
+            fields["phase"] = error.phase  # None (unknown) is dropped by _emit
+            fields["request_sent"] = error.request_sent
         if self._capture:
             fields["message"] = self._text(str(error))
         self._emit("retry", **fields)
+
+    def on_model_error(self, error: Exception) -> None:
+        """A model call that failed for good: the one outcome `retry` never reports."""
+        fields: dict[str, Any] = {"error_type": type(error).__name__}
+        if isinstance(error, ProviderError):
+            fields.update(
+                status_code=error.status_code,
+                phase=error.phase,
+                request_sent=error.request_sent,
+                request_id=error.request_id,
+                redirect_host=error.redirect_host,
+                attempts=error.attempts,
+                retry_wait_seconds=error.retry_wait_seconds or None,
+                attempt_log=[
+                    record.model_dump(mode="json", exclude_none=True)
+                    for record in error.attempt_log
+                ]
+                or None,
+            )
+        if self._capture:
+            fields["message"] = self._text(str(error))
+        self._emit("model_error", **fields)
 
     # --- tools ---
 

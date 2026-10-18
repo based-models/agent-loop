@@ -23,6 +23,7 @@ A frozen Pydantic model. Unknown fields are rejected.
 | `modal_proxy_token_secret` | `SecretStr | None` | `None` |
 | `openai_api_key` | `SecretStr | None` | `None` |
 | `openai_model` | `str` | `"gpt-5.1"` |
+| `openai_api` | `"responses" | "completions"` | `"responses"` |
 | `max_attempts` | `int >= 1` | `3` |
 
 ### `Settings.model`
@@ -49,10 +50,16 @@ assert settings.model == "gpt-5.1"
 ## `build_client`
 
 ```text
-build_client(settings, *, observer=None) -> LLMClient
+build_client(settings, *, observer=None, http_client=None) -> LLMClient
 ```
 
 Constructs the selected provider client and wraps it in `RetryingClient` using
 `settings.max_attempts`. The optional observer receives retry events. Raises `AuthError` for
-missing required credentials and `ConfigurationError` for incomplete Modal configuration
-or an unsupported provider.
+missing required credentials and `ConfigurationError` for incomplete Modal configuration,
+an unsupported provider, or an `http_client` from the wrong package.
+
+`http_client` carries your trust store, proxy or transport (see
+[corporate networks](../guides/providers.md#corporate-networks-trust-proxy-and-transport)).
+It is an `httpx2.Client` for `anthropic`, whose SDK is built on httpx2, and an
+`httpx.Client` for `openai`, `openrouter` and `modal`. It stays yours to close: closing the
+returned client leaves it open.

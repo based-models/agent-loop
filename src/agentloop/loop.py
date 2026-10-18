@@ -16,6 +16,7 @@ from agentloop.collector import SummaryCollector
 from agentloop.errors import AgentLoopError, LoopBudgetExceeded, ProviderError
 from agentloop.observer import BudgetKind, LoopObserver, MultiObserver, NullObserver
 from agentloop.provider import (
+    AttemptRecord,
     HostedTool,
     LLMClient,
     ModelRequest,
@@ -214,6 +215,17 @@ def run_conversation_result(
             provider_status_code=(
                 error.status_code if isinstance(error, ProviderError) else None
             ),
+            error_phase=error.phase if isinstance(error, ProviderError) else None,
+            error_request_sent=(
+                error.request_sent if isinstance(error, ProviderError) else None
+            ),
+            error_request_id=error.request_id if isinstance(error, ProviderError) else None,
+            error_attempts_sent=(
+                sum(1 for r in error.attempt_log if r.request_sent is not False)
+                if isinstance(error, ProviderError) and error.attempt_log
+                else None
+            ),
+            failed_attempts=collector.failed_attempts,
         )
 
     # Everything runs inside `conversation()`, so the summary reaches observers while
@@ -236,7 +248,9 @@ def run_conversation_result(
         except BaseException as exc:
             if isinstance(exc, ProviderError):
                 # A call that never answered still spent its retries.
-                collector.add_failed_attempts(exc.attempts - 1, exc.retry_wait_seconds)
+                collector.add_failed_attempts(
+                    exc.attempts - 1, exc.retry_wait_seconds, exc.attempt_log
+                )
             summary = summarize(_status_for(exc), exc)
             if isinstance(exc, AgentLoopError):
                 exc.summary = summary
@@ -323,7 +337,16 @@ class _Run:
                 input_tokens=usage.input_tokens if usage else 0,
                 output_tokens=usage.output_tokens if usage else 0,
                 cost_usd=usage.cost_usd if usage else None,
-                attempts=response.attempts if response is not None else 1,
+                attempts=(
+                    response.attempts
+                    if response is not None
+                    else error.attempts if isinstance(error, ProviderError) else 1
+                ),
+                attempt_log=(
+                    response.attempt_log
+                    if response is not None
+                    else error.attempt_log if isinstance(error, ProviderError) else ()
+                ),
                 discarded=discarded,
                 tools=tuple(r.tool_name for r in results),
                 tool_errors=tuple(r.tool_name for r in results if r.is_error),
@@ -363,7 +386,13 @@ class _Run:
             except BaseException as exc:
                 spent = time.monotonic() - call_started
                 self.model_seconds += spent
+                if isinstance(exc, ProviderError) and not exc.attempt_log:
+                    # A client without RetryingClient around it: one attempt, which
+                    # this error describes, so every consumer sees a log.
+                    exc.attempt_log = (AttemptRecord.from_error(exc.attempts, exc),)
                 self._add_turn(spent, error=exc)
+                if isinstance(exc, Exception):
+                    watcher.on_model_error(exc)
                 raise
             spent = time.monotonic() - call_started
             self.model_seconds += spent

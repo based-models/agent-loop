@@ -79,6 +79,8 @@ unless you supply one. Your application decides how to group, store, and aggrega
   truncated turn and each paused continuation.
 - `None` means unknown, never zero. `usage.cost_usd` is `None` unless a provider turn
   reported a cost; if only some turns did, it is the sum of those.
+- `request_sent` and `error_request_sent` keep three states. `None` means the adapter could
+  not tell, which is not the same as `False`.
 - `provider_retries` counts attempts after the first, including attempts for a request that
   ultimately failed. It works with any `RetryingClient` and requires no observer setup.
 

@@ -174,12 +174,16 @@ repeated-call detection, and limit warnings described in
 ### `Agent.from_env`
 
 ```text
-Agent.from_env(env, tools, **agent_options) -> Agent
+Agent.from_env(env, tools, *, http_client=None, **agent_options) -> Agent
 ```
 
 Builds `Settings`, creates a retrying provider client, and returns an agent that owns that
 client. `env` is an explicit mapping such as `os.environ`. The method does not load dotenv
 files. `observer` and `trace` are connected to both retries and loop events.
+
+`http_client` is passed to [`build_client`](config.md#build_client): an `httpx2.Client` for
+Anthropic, an `httpx.Client` for the other providers, or `ConfigurationError`. The agent's
+`close()` closes the provider client it built but leaves your `http_client` open.
 
 ### `Agent.run`
 

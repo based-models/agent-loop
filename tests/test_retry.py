@@ -69,9 +69,10 @@ def test_retries_then_succeeds() -> None:
     )
     response = RetryingClient(inner, policy=FAST).complete(REQUEST)
     # stamped for summaries: how many attempts, and how long it slept between them
-    assert response.model_copy(update={"retry_wait_seconds": 0.0}) == OK.model_copy(
-        update={"attempts": 3}
-    )
+    assert response.model_copy(
+        update={"retry_wait_seconds": 0.0, "attempt_log": ()}
+    ) == OK.model_copy(update={"attempts": 3})
+    assert len(response.attempt_log) == 3
     assert response.retry_wait_seconds > 0
     assert inner.call_count == 3
 
@@ -182,3 +183,41 @@ def test_close_reaches_the_inner_client() -> None:
     RetryingClient(inner).close()
     assert inner.closed == 1
     RetryingClient(FlakyClient()).close()      # nothing to close: not an error
+
+
+# --- the per-attempt log ---
+
+
+def test_a_success_after_retries_carries_one_record_per_attempt() -> None:
+    inner = FlakyClient(
+        RateLimited("slow", provider="flaky", status_code=429, request_id="r1"),
+        ProviderUnavailable("down", provider="flaky"),
+    )
+    client = RetryingClient(inner, policy=FAST)
+    log = client.complete(REQUEST).attempt_log
+    assert [r.attempt for r in log] == [1, 2, 3]
+    assert [r.ok for r in log] == [False, False, True]
+    assert [r.error_type for r in log] == ["RateLimited", "ProviderUnavailable", None]
+    assert log[0].status_code == 429
+    assert log[0].request_id == "r1"
+    assert log[0].wait_seconds > 0
+    assert log[2].wait_seconds == 0
+
+
+def test_a_first_try_success_has_an_empty_log() -> None:
+    assert RetryingClient(FlakyClient(), policy=FAST).complete(REQUEST).attempt_log == ()
+
+
+def test_a_terminal_failure_carries_the_whole_log() -> None:
+    inner = FlakyClient(ProviderUnavailable("a"), AuthError("b"))
+    with pytest.raises(AuthError) as caught:
+        RetryingClient(inner, policy=FAST).complete(REQUEST)
+    log = caught.value.attempt_log
+    assert [r.error_type for r in log] == ["ProviderUnavailable", "AuthError"]
+    assert log[-1].wait_seconds == 0
+
+
+def test_the_log_never_holds_the_error_message() -> None:
+    inner = FlakyClient(ProviderUnavailable("secret-token-123"))
+    log = RetryingClient(inner, policy=FAST).complete(REQUEST).attempt_log
+    assert "secret-token-123" not in log[0].model_dump_json()

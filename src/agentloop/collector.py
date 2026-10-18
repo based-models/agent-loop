@@ -13,10 +13,12 @@ from __future__ import annotations
 import threading
 import time
 from collections import Counter
+from collections.abc import Iterable
 
+from agentloop.errors import FailurePhase
 from agentloop.observer import NullObserver
-from agentloop.provider import ModelResponse, Usage
-from agentloop.summary import sum_usage
+from agentloop.provider import AttemptRecord, ModelResponse, Usage
+from agentloop.summary import FailureCount, sum_usage
 from agentloop.transcript import ToolCallPart, ToolResultPart
 
 
@@ -32,6 +34,7 @@ class SummaryCollector(NullObserver):
         self._usages: list[Usage] = []
         self._tool_calls: Counter[str] = Counter()
         self._tool_errors: Counter[str] = Counter()
+        self._failures: Counter[tuple[str, FailurePhase | None, bool | None]] = Counter()
         self._retries = 0
         self._retry_wait = 0.0
         self._tool_started: dict[str, float] = {}
@@ -46,6 +49,7 @@ class SummaryCollector(NullObserver):
             # are counted without this collector being wired into the client.
             self._retries += response.attempts - 1
             self._retry_wait += response.retry_wait_seconds
+            self._tally(response.attempt_log)
             self._model = response.model
             self._provider = response.provider
 
@@ -65,11 +69,35 @@ class SummaryCollector(NullObserver):
             if result.is_error:
                 self._tool_errors[call.tool_name] += 1
 
-    def add_failed_attempts(self, retries: int, waited: float = 0.0) -> None:
+    def add_failed_attempts(
+        self, retries: int, waited: float = 0.0, attempt_log: Iterable[AttemptRecord] = ()
+    ) -> None:
         """Retries (and the time spent waiting on them) before a call that never answered."""
         with self._lock:
             self._retries += retries
             self._retry_wait += waited
+            self._tally(attempt_log)
+
+    def _tally(self, attempt_log: Iterable[AttemptRecord]) -> None:
+        # Caller holds the lock.
+        for record in attempt_log:
+            if not record.ok and record.error_type is not None:
+                self._failures[(record.error_type, record.phase, record.request_sent)] += 1
+
+    @property
+    def failed_attempts(self) -> tuple[FailureCount, ...]:
+        with self._lock:
+            return tuple(
+                FailureCount(
+                    error_type=error_type,
+                    phase=phase,
+                    request_sent=sent,
+                    count=count,
+                )
+                for (error_type, phase, sent), count in sorted(
+                    self._failures.items(), key=lambda kv: (kv[0][0], str(kv[0][1]), str(kv[0][2]))
+                )
+            )
 
     @property
     def usage(self) -> Usage:
