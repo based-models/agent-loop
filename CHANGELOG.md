@@ -5,6 +5,45 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
 
 ## [Unreleased]
 
+### Added
+- Transport failures say what failed and whether the request was sent. `ProviderError` gains
+  `phase` (`FailurePhase`: connect, tls, proxy, send, read, status, redirect, body),
+  `request_sent` (`True`, `False`, or `None` when the adapter cannot tell; `False` means
+  nothing left the machine, so nothing was billed) and `redirect_host`. Adapters classify the
+  `httpx` exception chain once, so callers no longer walk `__cause__`.
+- `ProviderUnreachable` (a `ProviderUnavailable` subclass) for TLS verification, DNS and proxy
+  failures, and `UnexpectedRedirect` for a 3xx. Neither is retryable.
+- `http_client=` on `OpenAICompatClient`, `build_openai_client`, `build_openrouter_client`,
+  `build_modal_client`, `AnthropicClient`, `build_client` and `Agent.from_env`: pass an
+  `httpx.Client` for a custom trust store, proxy or transport. It stays yours to close. See
+  `docs/guides/providers.md`.
+- Per-attempt records: `AttemptRecord`, as `attempt_log` on `ModelResponse` (empty when the
+  first attempt succeeded) and on `ProviderError`. Names, statuses and ids only, no message text.
+- Summary: `failed_attempts` (`FailureCount` per error type, phase and send state),
+  `error_phase`, `error_request_sent`, `error_request_id` and `error_attempts_sent` (attempts
+  that may have reached the provider; `0` means nothing was billed). `TurnRecord.attempt_log`
+  with the timeline.
+- `LoopObserver.on_model_error(error)`: once per model call that failed for good, including the
+  final attempt that `on_retry` never reports. Optional: observers that lack it are skipped.
+  Observers that subclass `NullObserver` are unaffected; a hand-written class satisfying the
+  Protocol structurally should add it to keep type-checking.
+- Event trace: a `model_error` event, and `phase` / `request_sent` on `retry`. Metrics: the
+  `agentloop.provider.errors` counter (`error_type`, `phase`, `request_sent` of `true`,
+  `false` or `unknown`). Tracing: `agentloop.attempts`, `gen_ai.response.id`, and
+  `agentloop.error.*` on the model and root spans.
+
+### Changed
+- TLS verification, DNS and proxy failures are no longer retried: they fail the same way every
+  time. They raise `ProviderUnreachable`, still a `ProviderUnavailable`, with `retryable = False`.
+- A 3xx is reported as `UnexpectedRedirect` (with the target host only), not as a retryable
+  `ResponseInvalid` claiming "a 200". Redirects are still never followed.
+- A non-JSON body now reports its real status in `ResponseInvalid.status_code` and the message.
+- `OpenAICompatClient` sends its URL and headers per request instead of configuring them on the
+  `httpx.Client`; code that replaced the private `_http` attribute still works.
+
+### Fixed
+- `TurnRecord.attempts` reported `1` for a call that failed after retries.
+
 ## [0.5.0]
 
 ### Added

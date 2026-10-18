@@ -192,3 +192,36 @@ def test_no_metric_ever_carries_a_conversation_correlation_or_parent_id(
             seen.update(str(v) for v in attrs.values())
     assert not {"conversation_id", "correlation_id", "parent_id"} & seen
     assert not {v for v in seen if "unique" in v}
+
+
+def test_failed_attempts_are_counted_by_type_phase_and_send_state(harness: Harness) -> None:
+    from agentloop.errors import FailurePhase, ProviderUnavailable
+    from agentloop.retry import RetryingClient, RetryPolicy
+
+    reset = ProviderUnavailable("reset", phase=FailurePhase.READ, request_sent=True)
+    odd = ProviderUnavailable("odd")  # nothing known about it
+    client = RetryingClient(
+        FakeClient(reset, odd, resp(TextPart(text="ok"))), policy=RetryPolicy(base_delay=0.01)
+    )
+    harness.run(client)  # type: ignore[arg-type]
+    points = {
+        (a["error_type"], a["phase"], a["request_sent"]): v
+        for a, v in harness.points("agentloop.provider.errors")
+    }
+    assert points == {
+        ("ProviderUnavailable", "read", "true"): 1,
+        ("ProviderUnavailable", "unknown", "unknown"): 1,
+    }
+
+
+def test_provider_error_attributes_carry_no_ids_or_text(harness: Harness) -> None:
+    from agentloop.errors import FailurePhase, ProviderUnreachable
+
+    error = ProviderUnreachable(
+        "secret text", phase=FailurePhase.TLS, request_sent=False, request_id="req-77"
+    )
+    with pytest.raises(ProviderUnreachable):
+        harness.run(FakeClient(error))
+    ((attrs, _),) = harness.points("agentloop.provider.errors")
+    assert "req-77" not in str(attrs) and "secret" not in str(attrs)
+    assert attrs["request_sent"] == "false"

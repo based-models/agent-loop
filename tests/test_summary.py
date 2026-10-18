@@ -834,3 +834,51 @@ def test_an_unknown_send_state_stays_unknown_in_the_summary() -> None:
     assert caught.value.summary is not None
     assert caught.value.summary.error_request_sent is None
 
+
+class ErrorHookObserver(NullObserver):
+    def __init__(self) -> None:
+        self.errors: list[Exception] = []
+
+    def on_model_error(self, error: Exception) -> None:
+        self.errors.append(error)
+
+
+def test_on_model_error_fires_once_for_a_failed_call() -> None:
+    observer = ErrorHookObserver()
+    error = ProviderUnavailable("down")
+    with pytest.raises(ProviderUnavailable):
+        run_conversation_result(
+            transcript(), FakeClient(error), REGISTRY, ToyDeps(), observer=observer
+        )
+    assert observer.errors == [error]
+
+
+def test_on_model_error_does_not_fire_for_a_successful_run() -> None:
+    observer = ErrorHookObserver()
+    run_conversation_result(
+        transcript(), FakeClient(resp(TextPart(text="x"))), REGISTRY, ToyDeps(),
+        observer=observer,
+    )
+    assert observer.errors == []
+
+
+def test_an_observer_without_on_model_error_is_skipped_quietly(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Legacy:
+        def conversation(self) -> AbstractContextManager[None]:
+            return nullcontext()
+
+        def on_request(self, request: ModelRequest) -> None: ...
+        def on_response(self, response: ModelResponse) -> None: ...
+        def on_retry(self, attempt: int, error: Exception) -> None: ...
+        def on_tool_start(self, call: ToolCallPart) -> None: ...
+        def on_tool_end(self, call: ToolCallPart, result: ToolResultPart) -> None: ...
+        def on_text_delta(self, text: str) -> None: ...
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ProviderUnavailable):
+        run_conversation_result(
+            transcript(), FakeClient(ProviderUnavailable("down")), REGISTRY, ToyDeps(),
+            observer=Legacy(),  # type: ignore[arg-type]
+        )
+    assert not caplog.records

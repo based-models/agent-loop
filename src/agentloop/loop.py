@@ -391,6 +391,8 @@ class _Run:
                     # this error describes, so every consumer sees a log.
                     exc.attempt_log = (AttemptRecord.from_error(exc.attempts, exc),)
                 self._add_turn(spent, error=exc)
+                if isinstance(exc, Exception):
+                    watcher.on_model_error(exc)
                 raise
             spent = time.monotonic() - call_started
             self.model_seconds += spent

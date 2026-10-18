@@ -30,6 +30,12 @@ Implements `LLMClient` by delegating to `inner` and retrying `ProviderError` ins
   `observer.on_retry(attempt, error)` and sleeps.
 - `close()` calls the inner client's `close()` when present.
 
+A successful response after a retry, and a terminal error, carry `attempt_log`: one frozen
+`AttemptRecord` per attempt (`attempt`, `ok`, `error_type`, `status_code`, `phase`,
+`request_sent`, `request_id`, `wait_seconds`). It holds names and ids only, never the error
+message, so it is safe to log. It is empty when the first attempt succeeded. Use it to answer
+"did any attempt reach the provider?".
+
 `max_attempts` includes the initial request. `retry_after` is preferred over exponential
 backoff, but both are capped at `max_delay`.
 

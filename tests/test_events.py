@@ -280,3 +280,53 @@ def test_parallel_tools_still_produce_ordered_unique_sequence_numbers() -> None:
     seqs = [r["seq"] for r in records]
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
     assert sum(r["event"] == "tool_end" for r in records) == 8
+
+
+# --- a model call that failed for good ---
+
+
+def test_a_failed_model_call_emits_model_error_without_its_message() -> None:
+    from agentloop.errors import FailurePhase, ProviderUnreachable
+
+    error = ProviderUnreachable(
+        f"tls failed near {SECRET}", provider="p", phase=FailurePhase.TLS,
+        request_sent=False, request_id="req-1",
+    )
+    lines: list[str] = []
+    trace = EventTraceObserver(lines.append, terminator="")
+    client = RetryingClient(FakeClient(error), policy=RetryPolicy(base_delay=0.01), observer=trace)
+    with pytest.raises(ProviderUnreachable):
+        run(client, trace)
+    records = [json.loads(line) for line in lines]
+    failed = next(r for r in records if r["event"] == "model_error")
+    assert failed["error_type"] == "ProviderUnreachable"
+    assert failed["phase"] == "tls"
+    assert failed["request_sent"] is False  # False is a fact; only unknown is omitted
+    assert failed["request_id"] == "req-1"
+    assert failed["attempt_log"][0]["error_type"] == "ProviderUnreachable"
+    assert "message" not in failed
+    assert SECRET not in "\n".join(lines)
+    assert [r["event"] for r in records].index("model_error") < [
+        r["event"] for r in records
+    ].index("conversation_end")
+
+
+def test_an_unknown_send_state_is_absent_from_model_error() -> None:
+    lines: list[str] = []
+    trace = EventTraceObserver(lines.append, terminator="")
+    with pytest.raises(AuthError):
+        run(FakeClient(AuthError("no")), trace)
+    failed = next(json.loads(line) for line in lines if '"model_error"' in line)
+    assert "request_sent" not in failed
+    assert "phase" not in failed
+
+
+def test_a_captured_model_error_message_is_redacted() -> None:
+    lines: list[str] = []
+    trace = EventTraceObserver(
+        lines.append, terminator="", capture_content=True, redact=scrub
+    )
+    with pytest.raises(AuthError):
+        run(FakeClient(AuthError(f"bad key {SECRET}")), trace)
+    text = "\n".join(lines)
+    assert SECRET not in text and "bad key [REDACTED]" in text

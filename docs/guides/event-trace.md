@@ -24,8 +24,11 @@ By default, each line contains metadata only: sequence number, timestamp, elapse
 event name, conversation identifiers, and relevant counts, names, sizes, or status values.
 It does not contain prompts, model responses, tool arguments, tool results, or error text.
 
-The event names are `conversation_start`, `request`, `response`, `retry`, `tool_start`,
-`tool_end`, `stall`, `budget_warning`, and `conversation_end`. The final event carries the
+The event names are `conversation_start`, `request`, `response`, `retry`, `model_error`,
+`tool_start`, `tool_end`, `stall`, `budget_warning`, and `conversation_end`. `retry` reports an attempt that will be retried; `model_error` reports a call that failed for
+good, with its `error_type`, `status_code`, `phase`, `request_sent`, `request_id`, `attempts`
+and `attempt_log`. A field that is unknown is left out of the line, so a missing
+`request_sent` means unknown, not `false`. The final event carries the
 complete `ConversationSummary`, so the trace also serves as a JSONL log of summaries.
 
 ## Capturing content

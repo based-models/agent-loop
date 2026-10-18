@@ -18,6 +18,7 @@ A protocol with these methods:
 | `on_conversation_end(summary)` | Once per conversation, on success or failure, inside `conversation()`; optional |
 | `on_budget_warning(kind, used, limit)` | A configured share of a limit has been used; optional |
 | `on_stall(tool_name, count)` | A tool repeated the same call to the configured threshold; optional |
+| `on_model_error(error)` | A model call failed for good (not retryable, or retries exhausted), before the exception leaves the loop; optional |
 | `on_text_delta(text)` | Reserved for streaming; unused by the current loop |
 
 `conversation()` returns `AbstractContextManager[None]`. An observer can use it to create and

@@ -27,6 +27,7 @@ span for each local tool call. It implements all observer callbacks:
 - `on_request()` starts the current model span.
 - `on_response()` records response metadata and usage, then ends the model span.
 - `on_retry()` adds an event to the current model span.
+- `on_model_error()` records the phase and send state of a failed call on its model span.
 - `on_tool_start()` starts a tool span keyed by call ID.
 - `on_tool_end()` records result metadata and ends the matching span.
 - `on_text_delta()` is currently a no-op reserved for streaming.

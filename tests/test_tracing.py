@@ -447,3 +447,54 @@ def test_the_root_span_gets_its_ids_immediately_and_signals_as_events(
     events = {event.name: dict(event.attributes or {}) for event in root.events}
     assert events["agentloop.stall"] == {"tool": "echo", "count": 3}
     assert events["agentloop.budget_warning"]["kind"] == "iterations"
+
+
+def test_a_failed_call_says_its_phase_and_that_nothing_was_sent(
+    exporter: InMemorySpanExporter,
+) -> None:
+    from agentloop.errors import FailurePhase, ProviderUnreachable
+
+    class Unreachable:
+        name, model = "fake", "m"
+
+        def complete(self, request: ModelRequest) -> ModelResponse:
+            raise ProviderUnreachable(
+                "tls", phase=FailurePhase.TLS, request_sent=False, request_id="req-5"
+            )
+
+    exporter.clear()
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    with pytest.raises(ProviderUnreachable):
+        run_conversation(transcript, Unreachable(), REGISTRY, ToyDeps(),
+                         observer=OTelObserver(provider="fake", model="m"))
+    spans = exporter.get_finished_spans()
+    chat = attrs(next(s for s in spans if s.name == "chat m"))
+    root = attrs(next(s for s in spans if s.name.startswith("invoke_agent")))
+    assert chat["agentloop.error.phase"] == "tls"
+    assert chat["agentloop.error.request_sent"] is False
+    assert chat["agentloop.attempts"] == 1
+    assert root["agentloop.error.phase"] == "tls"
+    assert root["agentloop.error.request_sent"] is False
+    assert root["agentloop.error.attempts_sent"] == 0  # nothing reached the provider
+    assert root["agentloop.error.type"] == "ProviderUnreachable"
+
+
+def test_an_unknown_send_state_is_omitted_from_spans(exporter: InMemorySpanExporter) -> None:
+    exporter.clear()
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    with pytest.raises(ProviderUnavailable):
+        run_conversation(transcript, DownClient(), REGISTRY, ToyDeps(),
+                         observer=OTelObserver(provider="fake", model="m"))
+    chat = attrs(next(s for s in exporter.get_finished_spans() if s.name == "chat m"))
+    assert "agentloop.error.request_sent" not in chat
+    assert "agentloop.error.phase" not in chat
+
+
+def test_a_successful_call_records_its_attempts_and_request_id(
+    exporter: InMemorySpanExporter,
+) -> None:
+    drive(exporter, resp(TextPart(text="x")))
+    chat = attrs(next(s for s in exporter.get_finished_spans() if s.name == "chat m"))
+    assert chat["agentloop.attempts"] == 1

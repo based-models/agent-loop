@@ -262,7 +262,8 @@ pip install "based-models-agentloop[otel]"
 
 After your application configures OpenTelemetry providers, tracing creates spans for
 conversations, model requests, and local tool calls. Metrics cover conversation outcomes and
-duration, tool calls and failures, tokens, cost, retries, stalls, and limit warnings. Prompt
+duration, tool calls and failures, tokens, cost, retries, failed provider attempts (by error
+type, phase and whether the request was sent), stalls, and limit warnings. Prompt
 and tool content is excluded unless the application explicitly enables capture.
 
 ## Testing and custom providers

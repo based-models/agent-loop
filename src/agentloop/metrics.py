@@ -66,6 +66,11 @@ class MetricsObserver(NullObserver):
             "agentloop.provider.retries", unit="{retry}",
             description="Provider attempts beyond the first.",
         )
+        self._provider_errors = meter.create_counter(
+            "agentloop.provider.errors", unit="{attempt}",
+            description="Failed provider attempts, by error type, phase and whether the "
+            "request was sent (true, false or unknown).",
+        )
         self._stalls = meter.create_counter(
             "agentloop.stalls", unit="{stall}",
             description="Times a tool was repeated with identical arguments to the threshold.",
@@ -96,6 +101,18 @@ class MetricsObserver(NullObserver):
         self._model_duration.record(summary.model_seconds, base)
         if summary.provider_retries:
             self._retries.add(summary.provider_retries, base)
+
+        for failure in summary.failed_attempts:
+            sent = "unknown" if failure.request_sent is None else str(failure.request_sent).lower()
+            self._provider_errors.add(
+                failure.count,
+                {
+                    **base,
+                    "error_type": failure.error_type,
+                    "phase": str(failure.phase) if failure.phase is not None else "unknown",
+                    "request_sent": sent,
+                },
+            )
 
         for tool, seconds in summary.tool_duration_seconds.items():
             self._tool_duration.record(seconds, {**base, "tool": tool})

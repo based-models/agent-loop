@@ -39,7 +39,9 @@ default. Construct an
 content to leave the process. One `OTelObserver` can trace only one conversation at a time.
 
 The conversation span records its status, identifiers, iterations, limits, timing, retries,
-usage, and stall flag. It also receives stall and limit-warning events. This metadata is the
+usage, and stall flag. A failed call also gets `error.type`, `agentloop.error.phase` and `agentloop.error.request_sent`
+(omitted when unknown) on its model span and on the root span, and every model span records
+`agentloop.attempts`. It also receives stall and limit-warning events. This metadata is the
 same whether content capture is on or off.
 
 ## Metrics
@@ -82,6 +84,7 @@ finally:
 | `agentloop.tokens` | counter | provider, model, type |
 | `agentloop.cost` | counter (USD), only when a provider reports one | provider, model |
 | `agentloop.provider.retries` | counter | provider, model |
+| `agentloop.provider.errors` | counter | provider, model, error_type, phase, request_sent (`true`/`false`/`unknown`) |
 | `agentloop.stalls`, `agentloop.budget_warnings` | counters | tool / kind |
 
 Metric labels use a small, repeatable set of values such as status, provider, model, and tool

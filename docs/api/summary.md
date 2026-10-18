@@ -56,7 +56,18 @@ These options report conditions but do not stop or otherwise change the conversa
 
 Metadata for one model call: duration, stop reason, token use, cost, attempts, tools, tool
 errors, and whether a truncated call was discarded. When a call fails before returning,
-`error_type` contains the exception class name.
+`error_type` contains the exception class name. `attempt_log` has one `AttemptRecord` per
+attempt (empty when the first attempt succeeded), and `attempts` is the real count even for a
+call that failed.
+
+## `FailureCount`
+
+A count of failed provider attempts sharing one `error_type`, `phase` and `request_sent`.
+`ConversationSummary.failed_attempts` holds one per combination, covering retried and final
+failures alike. `ConversationSummary.error_phase`, `error_request_sent`, `error_request_id`
+and `error_attempts_sent` describe the call that ended a failed run; `error_attempts_sent` is
+the number of attempts that may have reached the provider, and `None` when no attempt log was
+recorded.
 
 ## `ConversationContext`
 
