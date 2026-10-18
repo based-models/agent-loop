@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch *)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(gh run list *)",
+      "Bash(gh run view *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr list *)",
+      "Bash(gh release view *)",
+      "Bash(curl -s https://pypi.org/*)",
+      "Bash(curl -s https://test.pypi.org/*)",
+      "Bash(conda run -n agentloop ruff *)",
+      "Bash(conda run -n agentloop mypy *)",
+      "Bash(conda run -n agentloop python -m pytest *)",
+      "Bash(conda run -n agentloop env PYTHON=python bash scripts/check.sh *)",
+      "Bash(bash scripts/check.sh *)"
+    ],
+    "deny": [
+      "Bash(git push --tags *)",
+      "Bash(git push * --tags *)",
+      "Bash(git push --force *)",
+      "Bash(git push * --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push * -f *)",
+      "Bash(twine upload *)",
+      "Bash(python -m twine upload *)",
+      "Bash(python3 -m twine upload *)"
+    ]
+  }
+}

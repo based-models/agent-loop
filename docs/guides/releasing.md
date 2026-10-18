@@ -47,7 +47,10 @@ The `Release` workflow then:
 ## Dry run
 
 Actions -> Release -> **Run workflow** (on any branch) builds, tests and publishes to
-TestPyPI only. Verify in a clean venv:
+TestPyPI only. Run it from the version-bump branch: TestPyPI refuses to re-upload a version,
+and the previous version is usually already there, so a run from `main` fails until the
+version is bumped. Check `https://test.pypi.org/pypi/based-models-agentloop/X.Y.Z/json` is a
+404 first; to retry after an upload, bump the version. Verify in a clean venv:
 
 ```bash
 pip install --index-url https://test.pypi.org/simple/ \
