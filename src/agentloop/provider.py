@@ -11,6 +11,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agentloop.errors import FailurePhase, ProviderError
 from agentloop.transcript import ContentPart, Message, Origin
 
 
@@ -104,6 +105,40 @@ class Usage(BaseModel):
     input_includes_cached: bool = True
 
 
+class AttemptRecord(BaseModel):
+    """One provider attempt, as RetryingClient saw it. Content-free by construction:
+    names, statuses and ids only, never the error message.
+
+    `request_sent` follows `ProviderError.request_sent`: None means unknown, which
+    is not the same as False.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    attempt: int = Field(ge=1)
+    ok: bool
+    error_type: str | None = None
+    status_code: int | None = None
+    phase: FailurePhase | None = None
+    request_sent: bool | None = None
+    request_id: str | None = None
+    # Seconds slept after this attempt, before the next. 0 for the last one.
+    wait_seconds: float = Field(default=0.0, ge=0)
+
+    @classmethod
+    def from_error(cls, attempt: int, error: ProviderError, *, wait: float = 0.0) -> AttemptRecord:
+        return cls(
+            attempt=attempt,
+            ok=False,
+            error_type=type(error).__name__,
+            status_code=error.status_code,
+            phase=error.phase,
+            request_sent=error.request_sent,
+            request_id=error.request_id,
+            wait_seconds=wait,
+        )
+
+
 class ModelResponse(BaseModel):
     """One model turn, normalized.
 
@@ -124,6 +159,9 @@ class ModelResponse(BaseModel):
     attempts: int = Field(default=1, ge=1)
     # Seconds RetryingClient slept between those attempts. 0 means none.
     retry_wait_seconds: float = Field(default=0.0, ge=0)
+    # One record per attempt, set by RetryingClient. Empty when the first attempt
+    # succeeded: there is nothing to tell.
+    attempt_log: tuple[AttemptRecord, ...] = ()
     # The adapter's own wire form of this turn, for exact replay. See Origin.
     origin: Origin | None = None
 

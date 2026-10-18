@@ -10,6 +10,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from agentloop.provider import AttemptRecord
     from agentloop.summary import ConversationSummary
 
 
@@ -116,6 +117,8 @@ class ProviderError(AgentLoopError):
         # Provider attempts made before giving up; RetryingClient sets it.
         self.attempts = 1
         self.retry_wait_seconds = 0.0
+        # One record per attempt, in order; RetryingClient sets it.
+        self.attempt_log: tuple[AttemptRecord, ...] = ()
 
 
 # --- your bug: retrying changes nothing ---

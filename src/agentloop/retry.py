@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from agentloop.errors import ProviderError
 from agentloop.observer import LoopObserver, guarded
 from agentloop.provider import (
+    AttemptRecord,
     LLMClient,
     ModelRequest,
     ModelResponse,
@@ -78,6 +79,7 @@ class RetryingClient:
     def complete(self, request: ModelRequest) -> ModelResponse:
         policy = self._policy
         waited = 0.0  # seconds spent sleeping between attempts
+        log: list[AttemptRecord] = []
         for attempt in range(1, policy.max_attempts + 1):
             try:
                 response = self._inner.complete(request)
@@ -87,8 +89,11 @@ class RetryingClient:
                     # So a summary can count retries for a call that never answered.
                     error.attempts = attempt
                     error.retry_wait_seconds = waited
+                    log.append(AttemptRecord.from_error(attempt, error))
+                    error.attempt_log = tuple(log)
                     raise
                 delay = self._delay_for(attempt, error)
+                log.append(AttemptRecord.from_error(attempt, error, wait=delay))
                 self._observer.on_retry(attempt, error)
                 logger.warning(
                     "%s (attempt %d/%d); retrying in %.1fs",
@@ -102,8 +107,15 @@ class RetryingClient:
             else:
                 if attempt == 1:
                     return response
+                log.append(
+                    AttemptRecord(attempt=attempt, ok=True, request_id=response.request_id)
+                )
                 return response.model_copy(
-                    update={"attempts": attempt, "retry_wait_seconds": waited}
+                    update={
+                        "attempts": attempt,
+                        "retry_wait_seconds": waited,
+                        "attempt_log": tuple(log),
+                    }
                 )
         raise AssertionError("unreachable: the loop always returns or raises")
 
