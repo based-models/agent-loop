@@ -74,8 +74,8 @@ Left over:
 
 ## Medium priority
 
-Items 13, 15, 16, 17 and 18 landed on `feature/medium-priority` (PR pending). Item 14 needs a
-live call and is still open. Left over:
+Items 13, 15, 16, 17 and 18 landed on `feature/medium-priority` (PR pending). Item 14 was checked live
+(below). Left over:
 
 ### 13. Resuming a transcript that ends mid-turn: the paused case
 
@@ -85,17 +85,14 @@ error. The new `_Run` starts with `continuing=False`, so the continuation become
 consecutive assistant message instead of extending the first. `Message` would have to record
 that the turn is open, for example in `Origin`.
 
-### 14. Verify Responses reasoning replay without `include: ["reasoning.encrypted_content"]`
+### 14. Responses reasoning replay without `include` (checked live, 2026-10-18)
 
-**Status:** needs a live check; not done. The docstring in `_openai_responses.py` says the
-encrypted reasoning content "`store: false` returns by default". OpenAI's API reference
-documents it as an opt-in `include` value for stateless use. If it is opt-in, reasoning items
-are replayed without their encrypted content. Reasoning models then lose their chain of thought
-across tool calls, or the request is rejected.
-
-**What implementing it takes:** run one tool-using turn on a reasoning model live and check
-`output[*].encrypted_content`. If it is missing, add `"reasoning.encrypted_content"` to
-`include` whenever the model may reason, and save the captured body as a fixture (item 21).
+Confirmed for `o4-mini`: a tool-using turn with `store: false` and no `include` returned a
+`reasoning` item with a non-empty `encrypted_content`, and replaying the transcript with it was
+accepted. The `_openai_responses.py` docstring is right for that model; no `include` is needed.
+Not covered: `gpt-5.5` (the `.env` model) produced no reasoning item at its default effort
+(0 reasoning tokens), so it did not exercise replay. Recheck if a request option for reasoning
+effort is added. Item 21's fixture for a Responses reasoning item is still unrecorded.
 
 ### 17. Model-aware provider `Quirks`: what is left
 
