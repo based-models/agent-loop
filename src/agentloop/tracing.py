@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -24,7 +24,7 @@ from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.trace import Span, Status, StatusCode
 
-from agentloop.errors import ProviderError
+from agentloop.errors import ConfigurationError, ProviderError
 from agentloop.observer import BudgetKind
 from agentloop.provider import ModelRequest, ModelResponse
 from agentloop.summary import ConversationContext, ConversationSummary
@@ -63,6 +63,11 @@ class OTelObserver:
 
     With `capture_content` off, nothing the model, a tool or a provider wrote
     reaches a span: that includes error messages, which quote arguments and code.
+
+    Turning it on needs a `redact` function (or an explicit `allow_unredacted=True`),
+    the same rule as `EventTraceObserver`. Every captured string goes through `redact`
+    first, and error details are clipped to `ERROR_DETAIL_CHARS` after it. A `redact`
+    that raises drops that one attribute rather than writing it unredacted.
     """
 
     def __init__(
@@ -72,13 +77,22 @@ class OTelObserver:
         model: str,
         agent_name: str = DEFAULT_AGENT_NAME,
         capture_content: bool = False,
+        redact: Callable[[str], str] | None = None,
+        allow_unredacted: bool = False,
     ) -> None:
+        if capture_content and redact is None and not allow_unredacted:
+            raise ConfigurationError(
+                "capture_content=True needs a `redact` function, so captured text is "
+                "scrubbed before it is exported. Pass allow_unredacted=True to capture "
+                "it as-is."
+            )
         self._provider = provider
         self._model = model
         # The APPLICATION's name, because it is what a trace reader is looking for.
         self._agent_name = agent_name
         # Off by default: a coding agent's prompts contain the user's source code.
         self._capture = capture_content
+        self._redact = redact
         self._root: Span | None = None
         self._model_span: Span | None = None
         self._tool_spans: dict[str, Span] = {}
@@ -90,6 +104,37 @@ class OTelObserver:
         # worker threads, where the ambient context is empty.
         self._context: Context | None = None
         self._running = threading.Lock()
+
+    def _text(self, value: str, limit: int | None = None) -> str | None:
+        """`value` redacted, then clipped; None when it must not be written.
+
+        The caller drops the attribute on None. Redact comes first so a secret cut in
+        half by the clip is never exported.
+        """
+        if self._redact is not None:
+            try:
+                value = self._redact(value)
+            except Exception:
+                logger.exception("redact raised; dropping the attribute")
+                return None
+        return value if limit is None else value[:limit]
+
+    def _set_text(self, span: Span, key: str, value: str) -> None:
+        text = self._text(value)
+        if text is not None:
+            span.set_attribute(key, text)
+
+    def _error_detail(self, exc: BaseException) -> str | None:
+        return self._text(str(exc), ERROR_DETAIL_CHARS) if self._capture else None
+
+    def _record_exception(self, span: Span, exc: BaseException) -> None:
+        """An `exception` event with a redacted message and NO stack trace: the SDK's
+        own `record_exception` writes both unredacted."""
+        attributes: dict[str, Any] = {"exception.type": type(exc).__name__}
+        detail = self._error_detail(exc)
+        if detail is not None:
+            attributes["exception.message"] = detail
+        span.add_event("exception", attributes)
 
     @contextmanager
     def conversation(self) -> Iterator[None]:
@@ -108,7 +153,7 @@ class OTelObserver:
                 },
                 # Both default to writing the exception MESSAGE onto the span,
                 # which may quote content; the except below does it by policy.
-                record_exception=self._capture,
+                record_exception=False,
                 set_status_on_exception=False,
             ) as root:
                 self._root = root
@@ -122,10 +167,9 @@ class OTelObserver:
                     # bug here should be logged, not swap out what the caller sees.
                     try:
                         root.set_attribute("error.type", type(exc).__name__)
-                        detail = (
-                            str(exc)[:ERROR_DETAIL_CHARS] if self._capture else None
-                        )
-                        root.set_status(Status(StatusCode.ERROR, detail))
+                        if self._capture:
+                            self._record_exception(root, exc)
+                        root.set_status(Status(StatusCode.ERROR, self._error_detail(exc)))
                         self._end_unfinished(exc)
                     except Exception:
                         logger.exception(
@@ -150,7 +194,7 @@ class OTelObserver:
             try:
                 span.set_attribute("error.type", type(exc).__name__)
                 if self._capture:
-                    span.record_exception(exc)
+                    self._record_exception(span, exc)
                 span.set_status(Status(StatusCode.ERROR))
             finally:
                 span.end()
@@ -173,7 +217,7 @@ class OTelObserver:
         if request.temperature is not None:
             span.set_attribute("gen_ai.request.temperature", request.temperature)
         if self._capture and request.system:
-            span.set_attribute("gen_ai.system_instructions", request.system)
+            self._set_text(span, "gen_ai.system_instructions", request.system)
         self._model_span = span
 
     def on_response(self, response: ModelResponse) -> None:
@@ -233,7 +277,9 @@ class OTelObserver:
             attributes.update(_failure_attributes(error, prefix="agentloop.retry"))
         if self._capture:
             # A provider's 400 can quote the request back, so this is content.
-            attributes["agentloop.retry.message"] = str(error)[:ERROR_DETAIL_CHARS]
+            detail = self._error_detail(error)
+            if detail is not None:
+                attributes["agentloop.retry.message"] = detail
         self._model_span.add_event("retry", attributes)
 
     def on_model_error(self, error: Exception) -> None:
@@ -260,7 +306,9 @@ class OTelObserver:
             # tests/test_layering.py stays shorter for it.
             import json
 
-            attributes["gen_ai.tool.call.arguments"] = json.dumps(call.arguments)
+            arguments = self._text(json.dumps(call.arguments))
+            if arguments is not None:
+                attributes["gen_ai.tool.call.arguments"] = arguments
         span = _tracer.start_span(
             f"execute_tool {call.tool_name}", context=self._context, attributes=attributes
         )
@@ -279,10 +327,12 @@ class OTelObserver:
                 "agentloop.tool.result_bytes", len(result.content.encode("utf-8"))
             )
             if self._capture:
-                span.set_attribute("gen_ai.tool.call.result", result.content)
+                self._set_text(span, "gen_ai.tool.call.result", result.content)
             if result.is_error:
                 # The error text quotes arguments and file contents: content, not metadata.
-                detail = result.content[:ERROR_DETAIL_CHARS] if self._capture else None
+                detail = (
+                    self._text(result.content, ERROR_DETAIL_CHARS) if self._capture else None
+                )
                 span.set_status(Status(StatusCode.ERROR, detail))
         finally:
             span.end()

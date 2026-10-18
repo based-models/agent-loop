@@ -74,6 +74,7 @@ def tool(
     *,
     name: str | None = None,
     description: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> Callable[[Callable[..., Any]], ToolSpec]:
     """Turn a plain function into a ToolSpec.
 
@@ -84,6 +85,9 @@ def tool(
     The decorated function does not take `deps`. If it wants one, it declares a
     keyword-only `deps` parameter; either way `deps` is stripped from the
     signature the model is shown.
+
+    `timeout_seconds` bounds one call: past it the model is told the tool timed out and
+    the loop moves on. The handler's thread is abandoned, not killed (see `ToolSpec`).
     """
 
     def decorate(fn: Callable[..., Any]) -> ToolSpec:
@@ -99,6 +103,7 @@ def tool(
             description=resolved_description,
             parameters=parameters,
             handler=_make_handler(fn),
+            timeout_seconds=timeout_seconds,
         )
 
     return decorate
@@ -167,7 +172,9 @@ class Agent:
         `trace=True` builds an `OTelObserver` (from `client.name`/`client.model`
         and `name`) and merges it with `observer`. Spans go nowhere until you
         separately call `agentloop.tracing.configure_tracing(endpoint)`; see its
-        docstring. An `OTelObserver` also holds a non-reentrant lock: one
+        docstring. It never captures content: that needs a `redact` function, so build
+        your own `OTelObserver(capture_content=True, redact=...)` and pass it as
+        `observer` instead. An `OTelObserver` also holds a non-reentrant lock: one
         `Agent(..., trace=True)` instance can run only one conversation at a
         time. Calling `run()`/`converse()` again while one is already in flight
         (e.g. from a second concurrent request sharing this instance) raises

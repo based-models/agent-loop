@@ -164,8 +164,9 @@ kept as internal state.
 
 `client` is borrowed: an agent constructed directly never closes it. `tools` accepts local
 `ToolSpec` objects and provider-run `HostedTool` objects. Values produced by `@tool` can be
-passed directly. Duplicate local tool names and unsupported hosted tools fail during
-construction. `deps` is the one runtime dependency bundle passed to local tool handlers,
+passed directly. Duplicate local tool names, unsupported hosted tools, and a local `ToolSpec` named like a
+hosted tool kind (for example `web_search`) fail during construction; native and client-side
+tools are separate, explicit choices. `deps` is the one runtime dependency bundle passed to local tool handlers,
 defaulting to `Deps()`. `trace=True` combines an `OTelObserver` with the supplied observer.
 `metrics=True` adds a `MetricsObserver`. `summary_options` configures the optional timeline,
 repeated-call detection, and limit warnings described in

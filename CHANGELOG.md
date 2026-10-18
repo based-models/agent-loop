@@ -36,8 +36,27 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
   `agentloop.provider.errors` counter (`error_type`, `phase`, `request_sent` of `true`,
   `false` or `unknown`). Tracing: `agentloop.attempts`, `gen_ai.response.id`, and
   `agentloop.error.*` on the model and root spans.
+- `ToolSpec.timeout_seconds` (and `@tool(timeout_seconds=...)`): a call that runs longer gets
+  an error result and the loop moves on. The handler's thread is abandoned, not killed.
+  Default `None` (no limit).
+- `OTelObserver(redact=..., allow_unredacted=...)`, with the event trace's rules.
+- `ConversationStatus.TOKEN_LIMIT` and `LoopBudgetExceeded(kind="max_tokens")`.
 
 ### Changed
+- `OTelObserver(capture_content=True)` now needs `redact` or `allow_unredacted=True`, else it
+  raises `ConfigurationError`. Captured text is redacted, then clipped; a redactor that raises
+  drops the attribute. Exceptions are recorded as an `exception` event with a redacted message
+  and no stack trace.
+- A turn truncated mid-tool-call no longer lowers a `max_tokens` above the 64,000 ceiling, and
+  when the budget cannot grow the run stops with `LoopBudgetExceeded(kind="max_tokens")`
+  (status `token_limit`) instead of re-billing the same cut-off up to `max_iterations`.
+- `ModelResponse.content` may be empty when `stop_reason` is `MAX_TOKENS`. The loop treats such
+  a turn (a reasoning model that spent the budget thinking) as a truncation and raises the
+  budget, instead of the adapter raising a retryable `ResponseInvalid`. Other empty turns are
+  still `ResponseInvalid`.
+- Calls to tools that are not registered are reported to observers, summaries, metrics, spans
+  and the event trace under `"<unregistered>"`, not the model's invented name. The model still
+  receives the real name in its "Unknown tool" result.
 - TLS verification, DNS and proxy failures are no longer retried: they fail the same way every
   time. They raise `ProviderUnreachable`, still a `ProviderUnavailable`, with `retryable = False`.
 - A 3xx is reported as `UnexpectedRedirect` (with the target host only), not as a retryable

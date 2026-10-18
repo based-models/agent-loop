@@ -261,3 +261,71 @@ def test_run_tools_called_directly_survives_a_raising_observer() -> None:
     calls = [call("echo", text="a"), call("refuse")]
     results = run_tools(calls, REGISTRY, ToyDeps(), BrokenTracer())
     assert [r.call_id for r in results] == ["c-echo", "c-refuse"]
+
+
+# --- a per-tool timeout ---
+
+
+def test_a_tool_that_outlives_its_timeout_gets_an_error_result() -> None:
+    registry = Registry([ToolSpec(
+        name="slow", description="the slow tool", parameters=schema(ms="integer"),
+        handler=slow, timeout_seconds=0.05,
+    )])
+    started = time.monotonic()
+    [result] = run_tools(
+        [ToolCallPart(id="c1", tool_name="slow", arguments={"ms": 2000})],
+        registry, ToyDeps(),
+    )
+    assert time.monotonic() - started < 1.0
+    assert result.is_error
+    assert "timed out" in result.content
+    assert result.call_id == "c1"
+
+
+def test_a_timed_tool_that_finishes_in_time_returns_normally() -> None:
+    registry = Registry([ToolSpec(
+        name="slow", description="the slow tool", parameters=schema(ms="integer"),
+        handler=slow, timeout_seconds=5,
+    )])
+    [result] = run_tools(
+        [ToolCallPart(id="c1", tool_name="slow", arguments={"ms": 1})], registry, ToyDeps()
+    )
+    assert result.content == "1"
+    assert not result.is_error
+
+
+def test_a_timed_tool_keeps_its_error_contract() -> None:
+    registry = Registry([
+        ToolSpec(name="refuse", description="d", parameters=schema(),
+                 handler=refuse, timeout_seconds=5),
+        ToolSpec(name="boom", description="d", parameters=schema(),
+                 handler=boom, timeout_seconds=5),
+    ])
+    refused, crashed = run_tools(
+        [ToolCallPart(id="a", tool_name="refuse", arguments={}),
+         ToolCallPart(id="b", tool_name="boom", arguments={})],
+        registry, ToyDeps(),
+    )
+    assert refused.content == "Error: the input was not in the expected shape"
+    assert crashed.content == "Error: RuntimeError: kaboom"
+
+
+def test_one_hung_tool_does_not_hold_up_its_siblings() -> None:
+    registry = Registry([
+        ToolSpec(name="slow", description="d", parameters=schema(ms="integer"),
+                 handler=slow, timeout_seconds=0.05),
+        spec("echo", echo, text="string"),
+    ])
+    started = time.monotonic()
+    hung, fine = run_tools(
+        [ToolCallPart(id="a", tool_name="slow", arguments={"ms": 2000}),
+         ToolCallPart(id="b", tool_name="echo", arguments={"text": "x"})],
+        registry, ToyDeps(),
+    )
+    assert time.monotonic() - started < 1.0  # the pool's shutdown must not wait for it
+    assert hung.is_error and fine.content == "x"
+
+
+def test_a_timeout_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        ToolSpec(name="t", description="d", parameters=schema(), handler=boom, timeout_seconds=0)

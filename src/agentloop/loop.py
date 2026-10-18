@@ -33,7 +33,7 @@ from agentloop.summary import (
     TurnRecord,
     new_conversation_id,
 )
-from agentloop.tooling import Registry, ToolDeps, run_tools
+from agentloop.tooling import Registry, ToolDeps, reported_tool_name, run_tools
 from agentloop.transcript import ToolCallPart, ToolResultPart, Transcript
 
 logger = logging.getLogger(__name__)
@@ -44,14 +44,17 @@ DEFAULT_MAX_ITERATIONS = 50
 DEFAULT_DEADLINE_SECONDS = 600.0
 
 
-def _is_truncated_mid_call(response: ModelResponse) -> bool:
-    """A turn cut off while the model was still writing a tool call's arguments.
+def _is_unusable_truncation(response: ModelResponse) -> bool:
+    """A turn cut off before it said anything the loop can keep.
 
-    Unrecoverable: the arguments are partial, so it cannot be executed, and it
-    cannot be skipped either (that leaves an unanswered tool call).
+    Either the model was still writing a tool call's arguments (partial, so it cannot
+    be executed, and cannot be skipped either: that leaves an unanswered tool call),
+    or it produced nothing readable at all (a reasoning model that spent the whole
+    budget thinking). A bigger budget is the only thing that can help.
     """
-    return response.stop_reason is StopReason.MAX_TOKENS and any(
-        isinstance(part, ToolCallPart) for part in response.content
+    return response.stop_reason is StopReason.MAX_TOKENS and (
+        not response.content
+        or any(isinstance(part, ToolCallPart) for part in response.content)
     )
 
 
@@ -62,6 +65,8 @@ def _status_for(error: BaseException) -> ConversationStatus:
             return ConversationStatus.ITERATION_LIMIT
         if error.kind == "deadline":
             return ConversationStatus.DEADLINE_EXCEEDED
+        if error.kind == "max_tokens":
+            return ConversationStatus.TOKEN_LIMIT
         return ConversationStatus.ERROR  # a budget error raised without saying which
     if isinstance(error, ProviderError):
         return ConversationStatus.PROVIDER_ERROR
@@ -348,8 +353,10 @@ class _Run:
                     else error.attempt_log if isinstance(error, ProviderError) else ()
                 ),
                 discarded=discarded,
-                tools=tuple(r.tool_name for r in results),
-                tool_errors=tuple(r.tool_name for r in results if r.is_error),
+                tools=tuple(reported_tool_name(self.registry, r.tool_name) for r in results),
+                tool_errors=tuple(
+                    reported_tool_name(self.registry, r.tool_name) for r in results if r.is_error
+                ),
                 tool_seconds=tool_seconds,
             )
         )
@@ -398,14 +405,25 @@ class _Run:
             self.model_seconds += spent
             watcher.on_response(response)
 
-            if _is_truncated_mid_call(response):
-                self.max_tokens = min(self.max_tokens * 2, MAX_TOKENS_CEILING)
+            if _is_unusable_truncation(response):
+                self._add_turn(spent, response=response, discarded=True)
+                # Never lower a budget the caller chose above the ceiling.
+                grown = max(self.max_tokens, min(self.max_tokens * 2, MAX_TOKENS_CEILING))
+                if grown == self.max_tokens:
+                    # Retrying the identical request would bill another full turn
+                    # for the same cut-off, until the iteration limit.
+                    raise LoopBudgetExceeded(
+                        f"the model's turn does not fit in max_tokens={self.max_tokens}",
+                        kind="max_tokens",
+                        limit=self.max_tokens,
+                        actual=response.usage.output_tokens,
+                    )
+                self.max_tokens = grown
                 logger.warning(
-                    "turn truncated mid-tool-call; discarding it and retrying "
+                    "turn truncated before it was usable; discarding it and retrying "
                     "with max_tokens=%d",
                     self.max_tokens,
                 )
-                self._add_turn(spent, response=response, discarded=True)
                 continue  # F1: do NOT append this turn
 
             if self.continuing:
@@ -430,7 +448,7 @@ class _Run:
 
             calls = [part for part in response.content if isinstance(part, ToolCallPart)]
             for tool_name, count in self.tracker.observe(calls):
-                watcher.on_stall(tool_name, count)
+                watcher.on_stall(reported_tool_name(self.registry, tool_name), count)
 
             tools_started = time.monotonic()
             results = run_tools(response.content, self.registry, self.deps, watcher)

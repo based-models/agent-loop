@@ -17,6 +17,8 @@ OTelObserver(
     model,
     agent_name="agentloop",
     capture_content=False,
+    redact=None,
+    allow_unredacted=False,
 )
 ```
 
@@ -28,12 +30,17 @@ span for each local tool call. It implements all observer callbacks:
 - `on_response()` records response metadata and usage, then ends the model span.
 - `on_retry()` adds an event to the current model span.
 - `on_model_error()` records the phase and send state of a failed call on its model span.
+- `on_response()` also sets `agentloop.hosted_tool.calls`, a count of provider-run tool calls
+  (never the queries).
 - `on_tool_start()` starts a tool span keyed by call ID.
 - `on_tool_end()` records result metadata and ends the matching span.
 - `on_text_delta()` is currently a no-op reserved for streaming.
 
 With `capture_content=False`, prompts, system instructions, arguments, results, and error
-messages are excluded. With it enabled those values may reach the exporter.
+messages are excluded. Enabling it requires `redact` (a `str -> str` function) or
+`allow_unredacted=True`, otherwise `ConfigurationError`. Every captured string is redacted
+and then clipped; a `redact` that raises drops that attribute. `Agent(trace=True)` never
+captures content: build an `OTelObserver` yourself to opt in.
 
 One observer instance supports one active conversation. Overlapping `conversation()`
 contexts raise `RuntimeError`. Tool callbacks are synchronized because tools can run in

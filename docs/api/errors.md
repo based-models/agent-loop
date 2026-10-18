@@ -65,6 +65,10 @@ and `retry_wait_seconds`. Only `RateLimited`, `ProviderUnavailable`, `ProviderTi
 retryable: they are faults in the environment, and a retry fails the same way. A refused or
 reset connection and a read error stay retryable.
 
+`InsufficientCredits` covers OpenRouter's 402 and an OpenAI 429 whose error `type`/`code` is
+`insufficient_quota` or `credit_balance_exhausted`. The latter is a 429 only in name: it is
+not retried, since waiting does not add credit.
+
 An `AgentLoopError` raised from an active conversation also carries its
 `ConversationSummary` as `.summary`. Errors raised before a conversation starts may have
 `.summary = None`.

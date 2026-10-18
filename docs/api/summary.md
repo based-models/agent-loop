@@ -6,10 +6,10 @@ prompts, model responses, tool arguments, tool results, or exception messages.
 ## `ConversationStatus`
 
 Describes how a conversation ended: `completed`, `refused`, `truncated`,
-`iteration_limit`, `deadline_exceeded`, `provider_error`, `error`, or `cancelled`.
+`iteration_limit`, `deadline_exceeded`, `token_limit`, `provider_error`, `error`, or `cancelled`.
 
 Use `status.succeeded` to check whether the call returned normally and
-`status.budget_exhausted` to check whether it reached an iteration or time limit.
+`status.budget_exhausted` to check whether it reached an iteration, time or output-token limit.
 
 ## `ConversationSummary`
 

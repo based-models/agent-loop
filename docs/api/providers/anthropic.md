@@ -9,6 +9,12 @@ Anthropic Messages API integration. The SDK is imported only when needed and req
 - `DEFAULT_MODEL = "claude-opus-5"`
 - `DEFAULT_TIMEOUT_SECONDS = 600.0`
 - `CONTEXT_OVERFLOW_STOP_REASON = "model_context_window_exceeded"`
+- `API = "messages"`
+- `HOSTED_TOOLS = frozenset({"web_search"})`: the hosted kinds `AnthropicClient` runs.
+- `WEB_SEARCH_BASIC = "web_search_20250305"`: the default web search tool.
+- `WEB_SEARCH_FILTERED = "web_search_20260209"`: sent only when the hosted tool has
+  `dynamic_filtering=True` (Claude 4.6+). Claude then runs a program that filters results, so
+  the response carries no citations; see the [hosted tools guide](../../guides/hosted-tools.md).
 
 ## Translation helpers
 
@@ -18,6 +24,8 @@ These public helpers convert between shared Agentloop types and the Anthropic AP
 - `message_to_wire(message) -> dict[str, Any]`: converts one provider-independent message to one
   Anthropic message.
 - `request_to_wire(request, *, model) -> dict[str, Any]`: builds a Messages API payload.
+- `hosted_tool_to_wire(tool) -> dict[str, Any]`: maps a `HostedTool` to the Anthropic tool
+  declaration.
 - `usage_from_wire(raw) -> Usage`: normalizes Anthropic usage fields.
 - `response_from_wire(message) -> ModelResponse`: normalizes a response and may raise
   `ContextLengthExceeded` or `ResponseInvalid`, both with `phase=BODY` and
@@ -56,5 +64,8 @@ classes are not httpx's. Any other object, an `httpx.Client` included, raises
 close. The SDK follows redirects by default; pass a client with `follow_redirects=False` to
 have a 3xx reported.
 - `__enter__()` returns the client; `__exit__()` closes it.
+
+`pause_turn` maps to `StopReason.PAUSED`. Assistant turns are replayed from `Origin.raw`, so
+encrypted search results and signatures go back exactly as received.
 
 When `api_key=None`, credential resolution is delegated to the Anthropic SDK.
