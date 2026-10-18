@@ -34,8 +34,14 @@ with build_openrouter_client(
 
 ## Corporate networks: trust, proxy and transport
 
-The library never reads certificates or builds a trust store. Pass an `httpx.Client` you
-configured, and it carries your settings for every request. It stays yours to close.
+The library never reads certificates or builds a trust store. Pass an HTTP client you
+configured, and it carries your settings for every request. It stays yours to close: closing
+the agent or the provider client leaves it open.
+
+OpenAI, OpenRouter and Modal take an `httpx.Client`. Anthropic takes an `httpx2.Client`,
+because the Anthropic SDK is built on httpx2, whose classes are not httpx's. Both packages
+take the same `verify`, `proxy` and `transport` arguments. Passing the wrong one raises
+`ConfigurationError` naming the package the provider needs.
 
 ```python
 import ssl
@@ -53,9 +59,11 @@ with Agent.from_env(env, tools=[], http_client=http) as agent:
 http.close()
 ```
 
+For `LLM_PROVIDER=anthropic`, build the same client with `httpx2.Client(...)` instead.
+
 The same `http_client=` is accepted by `build_client`, the provider builders and
-`AnthropicClient`. Without it, httpx's environment variables (`HTTPS_PROXY`, `SSL_CERT_FILE`)
-still apply. The adapter sends its URL and credentials per request, so your client needs no
+`AnthropicClient`. Without it, the HTTP package's environment variables (`HTTPS_PROXY`,
+`SSL_CERT_FILE`) still apply. The adapter sends its URL and credentials per request, so your client needs no
 `base_url` or default headers; its own timeout wins if you set one.
 
 Redirects are not followed on the clients the library builds, because that would resend your

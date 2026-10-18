@@ -294,3 +294,26 @@ def test_native_search_is_supported_where_the_provider_runs_it(
     else:
         with pytest.raises(ConfigurationError, match="cannot run the hosted tool"):
             Agent.from_env(env, [SEARCH])
+
+
+# --- a caller-supplied HTTP client ---
+
+
+def test_from_env_names_the_package_anthropic_needs() -> None:
+    import httpx
+
+    http = httpx.Client()
+    env = {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "sk-ant-x"}
+    with pytest.raises(ConfigurationError, match="httpx2.Client"):
+        Agent.from_env(env, [], http_client=http)
+    http.close()
+
+
+def test_closing_a_from_env_agent_leaves_an_injected_client_open() -> None:
+    import httpx2
+
+    http = httpx2.Client()
+    env = {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "sk-ant-x"}
+    Agent.from_env(env, [], http_client=http).close()
+    assert not http.is_closed
+    http.close()

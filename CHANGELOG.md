@@ -10,13 +10,18 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
   `phase` (`FailurePhase`: connect, tls, proxy, send, read, status, redirect, body),
   `request_sent` (`True`, `False`, or `None` when the adapter cannot tell; `False` means
   nothing left the machine, so nothing was billed) and `redirect_host`. Adapters classify the
-  `httpx` exception chain once, so callers no longer walk `__cause__`.
+  HTTP exception chain once, `httpx` or (under the Anthropic SDK) `httpx2`, so callers no
+  longer walk `__cause__`. An error read from a response the server sent (an error inside a
+  200, a failed Responses body, a shape that cannot be normalized, Anthropic's 200 context
+  overflow) has `phase=body` and `request_sent=True`.
 - `ProviderUnreachable` (a `ProviderUnavailable` subclass) for TLS verification, DNS and proxy
   failures, and `UnexpectedRedirect` for a 3xx. Neither is retryable.
 - `http_client=` on `OpenAICompatClient`, `build_openai_client`, `build_openrouter_client`,
   `build_modal_client`, `AnthropicClient`, `build_client` and `Agent.from_env`: pass an
-  `httpx.Client` for a custom trust store, proxy or transport. It stays yours to close. See
-  `docs/guides/providers.md`.
+  `httpx.Client` for a custom trust store, proxy or transport, or an `httpx2.Client` for
+  Anthropic, whose SDK is built on httpx2. A client from the wrong package raises
+  `ConfigurationError`. It stays yours to close: closing the agent or the provider client
+  leaves it open. See `docs/guides/providers.md`.
 - Per-attempt records: `AttemptRecord`, as `attempt_log` on `ModelResponse` (empty when the
   first attempt succeeded) and on `ProviderError`. Names, statuses and ids only, no message text.
 - Summary: `failed_attempts` (`FailureCount` per error type, phase and send state),

@@ -1,10 +1,14 @@
 """Name a transport failure once, so no caller walks `__cause__` to find out what it was.
 
-Shared by the adapters that sit on httpx (directly, or underneath a vendor SDK).
-httpx and ssl are imported inside the function: the extras stay optional.
+Shared by the adapters that sit on httpx (directly, or underneath a vendor SDK). The
+Anthropic SDK is built on httpx2, a fork with the same exception names but its own
+classes, so every check matches both. httpx, httpx2 and ssl are imported inside the
+functions: the extras stay optional, and either HTTP package may be absent.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from agentloop.errors import (
     FailurePhase,
@@ -31,6 +35,24 @@ def _chain(exc: BaseException) -> list[BaseException]:
     return seen
 
 
+def _http_packages() -> list[Any]:
+    """httpx and httpx2, whichever are installed."""
+    packages: list[Any] = []
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover - only the anthropic extra installed
+        pass
+    else:
+        packages.append(httpx)
+    try:
+        import httpx2
+    except ImportError:  # pragma: no cover - only the openai-compat extra installed
+        pass
+    else:
+        packages.append(httpx2)
+    return packages
+
+
 def classify_transport_error(exc: BaseException, *, provider: str) -> ProviderError:
     """Map a transport failure to an error that says what failed and whether it was sent.
 
@@ -40,7 +62,11 @@ def classify_transport_error(exc: BaseException, *, provider: str) -> ProviderEr
     """
     import ssl
 
-    import httpx
+    packages = _http_packages()
+
+    def kinds(*names: str) -> tuple[type[BaseException], ...]:
+        """The named exception classes from every installed HTTP package."""
+        return tuple(getattr(package, name) for package in packages for name in names)
 
     # A TLS or DNS failure is wrapped in a ConnectError, so look at the whole chain
     # for the specific cause before falling back to the transport type.
@@ -54,34 +80,34 @@ def classify_transport_error(exc: BaseException, *, provider: str) -> ProviderEr
 
     if any(isinstance(e, ssl.SSLError) for e in chain):
         return unreachable(FailurePhase.TLS)
-    if any(isinstance(e, httpx.ProxyError) for e in chain):
+    if any(isinstance(e, kinds("ProxyError")) for e in chain):
         return unreachable(FailurePhase.PROXY)
     # socket.gaierror, matched by name: the library never imports socket.
     if any(type(e).__name__ == "gaierror" for e in chain):
         return unreachable(FailurePhase.CONNECT)
 
     for e in chain:
-        if isinstance(e, httpx.ConnectTimeout | httpx.PoolTimeout):
+        if isinstance(e, kinds("ConnectTimeout", "PoolTimeout")):
             return ProviderTimeout(
                 message, provider=provider, phase=FailurePhase.CONNECT, request_sent=False
             )
-        if isinstance(e, httpx.ReadTimeout):
+        if isinstance(e, kinds("ReadTimeout")):
             return ProviderTimeout(
                 message, provider=provider, phase=FailurePhase.READ, request_sent=True
             )
-        if isinstance(e, httpx.WriteTimeout):
+        if isinstance(e, kinds("WriteTimeout")):
             return ProviderTimeout(message, provider=provider, phase=FailurePhase.SEND)
-        if isinstance(e, httpx.ConnectError):
+        if isinstance(e, kinds("ConnectError")):
             return ProviderUnavailable(
                 message, provider=provider, phase=FailurePhase.CONNECT, request_sent=False
             )
-        if isinstance(e, httpx.WriteError):
+        if isinstance(e, kinds("WriteError")):
             return ProviderUnavailable(message, provider=provider, phase=FailurePhase.SEND)
-        if isinstance(e, httpx.ReadError | httpx.RemoteProtocolError):
+        if isinstance(e, kinds("ReadError", "RemoteProtocolError")):
             return ProviderUnavailable(
                 message, provider=provider, phase=FailurePhase.READ, request_sent=True
             )
-        if isinstance(e, httpx.TimeoutException):
+        if isinstance(e, kinds("TimeoutException")):
             return ProviderTimeout(message, provider=provider)
     return ProviderUnavailable(message, provider=provider)
 

@@ -490,3 +490,68 @@ def test_a_turn_from_another_provider_is_rebuilt_from_its_parts() -> None:
     assert message_to_wire(message) == {
         "role": "assistant", "content": [{"type": "text", "text": "Answer."}],
     }
+
+
+# --- a caller-supplied HTTP client: httpx2, and the caller's to close ---
+
+
+def ok_message() -> dict[str, object]:
+    return {
+        "id": "msg_1", "type": "message", "role": "assistant", "model": MODEL,
+        "content": [{"type": "text", "text": "hi"}], "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+
+
+def test_an_injected_httpx2_client_carries_the_request() -> None:
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(200, json=ok_message())
+
+    http = httpx2.Client(transport=httpx2.MockTransport(handler))
+    client = AnthropicClient(api_key="sk-ant-test", http_client=http)
+    assert client.complete(ModelRequest(messages=())).request_id == "msg_1"
+    assert seen[0].url.path == "/v1/messages"
+    http.close()
+
+
+def test_closing_the_adapter_leaves_an_injected_client_open() -> None:
+    http = httpx2.Client()
+    AnthropicClient(api_key="sk-ant-test", http_client=http).close()
+    assert not http.is_closed
+    http.close()
+
+
+def test_closing_the_adapter_closes_a_client_it_built() -> None:
+    client = AnthropicClient(api_key="sk-ant-test")
+    client.close()
+    assert client._client.is_closed()
+
+
+def test_an_httpx_client_is_a_configuration_error_naming_httpx2() -> None:
+    import httpx
+
+    http = httpx.Client()
+    with pytest.raises(ConfigurationError, match=r"httpx2\.Client.*not httpx\.Client:"):
+        AnthropicClient(api_key="sk-ant-test", http_client=http)  # type: ignore[arg-type]
+    http.close()
+
+
+def test_an_sdk_built_on_httpx_takes_an_httpx_client() -> None:
+    # anthropic>=1.0 allows SDKs on either stack: the expected class comes from the SDK.
+    import httpx
+
+    from agentloop.providers.anthropic import _check_http_client
+
+    class DefaultHttpxClient(httpx.Client):
+        pass
+
+    old_sdk = SimpleNamespace(DefaultHttpxClient=DefaultHttpxClient)
+    http = httpx.Client()
+    _check_http_client(old_sdk, http)
+    http.close()
+    with pytest.raises(ConfigurationError, match=r"needs an httpx\.Client.*not httpx2\.Client"):
+        _check_http_client(old_sdk, httpx2.Client())
+    _check_http_client(SimpleNamespace(), object())  # no way to tell: the SDK decides

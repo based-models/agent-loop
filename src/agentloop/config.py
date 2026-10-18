@@ -10,12 +10,13 @@ Provider SDKs are imported lazily so a single-extra install stays importable.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
     import httpx
+    import httpx2
 
 from agentloop.errors import AuthError, ConfigurationError
 from agentloop.observer import LoopObserver
@@ -127,12 +128,16 @@ def build_client(
     settings: Settings,
     *,
     observer: LoopObserver | None = None,
-    http_client: httpx.Client | None = None,
+    http_client: httpx.Client | httpx2.Client | None = None,
 ) -> LLMClient:
     """Construct the configured provider's client, ready to use.
 
     `http_client` carries your trust store, proxy or transport; it stays yours to close.
+    It is an `httpx2.Client` for anthropic (its SDK is built on httpx2) and an
+    `httpx.Client` for the others; the wrong one raises `ConfigurationError`.
     """
+    # The helpers take the client untyped: each provider constructor checks the package
+    # itself and raises ConfigurationError for the wrong one.
     inner: LLMClient
     match settings.provider:
         case "anthropic":
@@ -154,7 +159,7 @@ def build_client(
     )
 
 
-def _build_anthropic(settings: Settings, http_client: httpx.Client | None) -> LLMClient:
+def _build_anthropic(settings: Settings, http_client: Any) -> LLMClient:
     from agentloop.providers.anthropic import AnthropicClient  # lazy: keeps the extra optional
 
     key = settings.anthropic_api_key
@@ -166,7 +171,7 @@ def _build_anthropic(settings: Settings, http_client: httpx.Client | None) -> LL
     )
 
 
-def _build_openrouter(settings: Settings, http_client: httpx.Client | None) -> LLMClient:
+def _build_openrouter(settings: Settings, http_client: Any) -> LLMClient:
     from agentloop.providers.openrouter import build_openrouter_client
 
     if settings.openrouter_api_key is None:
@@ -178,7 +183,7 @@ def _build_openrouter(settings: Settings, http_client: httpx.Client | None) -> L
     )
 
 
-def _build_modal(settings: Settings, http_client: httpx.Client | None) -> LLMClient:
+def _build_modal(settings: Settings, http_client: Any) -> LLMClient:
     from agentloop.providers.modal import build_modal_client
 
     if not settings.modal_endpoint_url:
@@ -201,7 +206,7 @@ def _build_modal(settings: Settings, http_client: httpx.Client | None) -> LLMCli
     )
 
 
-def _build_openai(settings: Settings, http_client: httpx.Client | None) -> LLMClient:
+def _build_openai(settings: Settings, http_client: Any) -> LLMClient:
     from agentloop.providers.openai import build_openai_client
 
     if settings.openai_api_key is None:

@@ -3,7 +3,9 @@
 import ssl
 from collections.abc import Callable
 
+import anthropic
 import httpx
+import httpx2
 import pytest
 
 from agentloop.errors import (
@@ -18,6 +20,7 @@ from agentloop.errors import (
 from agentloop.provider import ModelRequest, ModelResponse, StopReason, Usage
 from agentloop.providers._openai_compat import OpenAICompatClient, Quirks
 from agentloop.providers._transport import classify_transport_error
+from agentloop.providers.anthropic import AnthropicClient, classify_sdk_error
 from agentloop.retry import RetryingClient, RetryPolicy
 from agentloop.transcript import TextPart
 
@@ -281,4 +284,65 @@ def test_the_builders_pass_the_client_through() -> None:
         build_modal_client(endpoint_url="https://m.test", http_client=http),
     ]
     assert all(c._http is http and not c._owns_http for c in clients)
+    http.close()
+
+
+# --- the Anthropic SDK: built on httpx2, whose classes are not httpx's ---
+
+ANTHROPIC_REQUEST = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+
+
+def sdk_wrapped(cause: Exception, *, timeout: bool = False) -> Exception:
+    """As the SDK raises it: its own wrapper, raised from the httpx2 exception."""
+    error: Exception = (
+        anthropic.APITimeoutError(request=ANTHROPIC_REQUEST)
+        if timeout
+        else anthropic.APIConnectionError(request=ANTHROPIC_REQUEST)
+    )
+    error.__cause__ = cause
+    return error
+
+
+def httpx2_tls_failure() -> httpx2.ConnectError:
+    error = httpx2.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]")
+    error.__cause__ = ssl.SSLCertVerificationError("certificate verify failed")
+    return error
+
+
+@pytest.mark.parametrize(
+    ("error", "expected", "phase", "sent"),
+    [
+        (sdk_wrapped(httpx2.ConnectError("refused")), ProviderUnavailable,
+         FailurePhase.CONNECT, False),
+        (sdk_wrapped(httpx2.ReadError("reset")), ProviderUnavailable, FailurePhase.READ, True),
+        (sdk_wrapped(httpx2.ConnectTimeout("t"), timeout=True), ProviderTimeout,
+         FailurePhase.CONNECT, False),
+        (sdk_wrapped(httpx2.ReadTimeout("t"), timeout=True), ProviderTimeout,
+         FailurePhase.READ, True),
+        (sdk_wrapped(httpx2.ProxyError("407")), ProviderUnreachable, FailurePhase.PROXY, False),
+        (sdk_wrapped(httpx2_tls_failure()), ProviderUnreachable, FailurePhase.TLS, False),
+    ],
+    ids=["connect", "read", "connect-timeout", "read-timeout", "proxy", "tls"],
+)
+def test_an_anthropic_transport_failure_says_what_failed(
+    error: Exception, expected: type[ProviderError], phase: FailurePhase, sent: bool
+) -> None:
+    classified = classify_sdk_error(error)
+    assert type(classified) is expected
+    assert (classified.phase, classified.request_sent) == (phase, sent)
+
+
+def test_a_proxy_refusal_through_anthropic_is_not_retried() -> None:
+    assert classify_sdk_error(sdk_wrapped(httpx2.ProxyError("407"))).retryable is False
+
+
+def test_the_anthropic_client_classifies_what_its_transport_raised() -> None:
+    def refuse(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("refused", request=request)
+
+    http = httpx2.Client(transport=httpx2.MockTransport(refuse))
+    client = AnthropicClient(api_key="sk-ant-test", http_client=http)
+    with pytest.raises(ProviderUnavailable) as caught:
+        client.complete(REQUEST)
+    assert (caught.value.phase, caught.value.request_sent) == (FailurePhase.CONNECT, False)
     http.close()

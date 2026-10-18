@@ -206,8 +206,10 @@ class Agent:
         default, deliberately: a library that reads the process environment on its
         own surprises everyone who depends on it.
 
-        Pass `http_client=` (an `httpx.Client`) for a custom trust store, proxy or
-        transport. It stays yours to close; `close()` here does not touch it.
+        Pass `http_client=` for a custom trust store, proxy or transport: an
+        `httpx2.Client` for anthropic (its SDK is built on httpx2), an `httpx.Client`
+        for the others. The wrong one raises `ConfigurationError`. It stays yours to
+        close; `close()` here does not touch it.
         """
         from agentloop.config import Settings, build_client
 

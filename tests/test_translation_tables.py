@@ -4,10 +4,15 @@ Adding a provider or a case means adding a row, not writing a new test.
 """
 
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
+import anthropic as sdk
+import httpx
+import httpx2
 import pytest
 
+from agentloop.errors import FailurePhase, ProviderError
 from agentloop.providers import _openai_compat, _openai_responses, anthropic
 from agentloop.transcript import Message, TextPart, ToolCallPart, ToolResultPart
 
@@ -69,3 +74,87 @@ def test_two_tool_results_fan_out_as_each_vendor_requires(
 def test_call_order_survives_every_translation(adapter: str, message: Message) -> None:
     """Results must come back in call order; calls must go out in call order."""
     assert _call_ids(ADAPTERS[adapter](message)) == ["c1", "c2"]
+
+
+# --- every error raised after the server answered says so ---
+
+ANTHROPIC_REQUEST = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+
+
+def _anthropic_message(*blocks: SimpleNamespace, stop: str = "end_turn") -> SimpleNamespace:
+    return SimpleNamespace(
+        content=list(blocks), stop_reason=stop, model="m", id="msg_1",
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+
+
+def _responses_body(**fields: Any) -> dict[str, Any]:
+    return {"model": "m", "status": "completed", "output": [], **fields}
+
+
+ANSWERED: dict[str, Callable[[], object]] = {
+    "completions/error-in-200": lambda: _openai_compat.response_from_wire(
+        {"error": {"code": 503, "message": "down"}}, provider="p", quirks=QUIRKS
+    ),
+    "completions/error-in-200-no-code": lambda: _openai_compat.response_from_wire(
+        {"error": "odd"}, provider="p", quirks=QUIRKS
+    ),
+    "completions/no-choices": lambda: _openai_compat.response_from_wire(
+        {"choices": []}, provider="p", quirks=QUIRKS
+    ),
+    "completions/bad-shape": lambda: _openai_compat.response_from_wire(
+        {"choices": ["not a dict"]}, provider="p", quirks=QUIRKS
+    ),
+    "completions/status": lambda: _openai_compat.classify_http_error(
+        httpx.Response(503, json={"error": {"message": "down"}}), provider="p", quirks=QUIRKS
+    ),
+    "responses/failed-retryable": lambda: _openai_responses.response_from_wire(
+        _responses_body(status="failed", error={"code": "server_error", "message": "x"}),
+        provider="p", quirks=QUIRKS,
+    ),
+    "responses/failed": lambda: _openai_responses.response_from_wire(
+        _responses_body(status="failed", error={"code": "invalid_prompt", "message": "x"}),
+        provider="p", quirks=QUIRKS,
+    ),
+    "responses/bad-status": lambda: _openai_responses.response_from_wire(
+        _responses_body(status="in_progress"), provider="p", quirks=QUIRKS
+    ),
+    "responses/bad-shape": lambda: _openai_responses.response_from_wire(
+        _responses_body(output=["not a dict"]), provider="p", quirks=QUIRKS
+    ),
+    "anthropic/context-overflow-200": lambda: anthropic.response_from_wire(
+        _anthropic_message(stop="model_context_window_exceeded")
+    ),
+    "anthropic/unreadable-block": lambda: anthropic.response_from_wire(
+        _anthropic_message(SimpleNamespace(type="tool_use", id="c1"))
+    ),
+    "anthropic/empty-turn": lambda: anthropic.response_from_wire(_anthropic_message()),
+    "anthropic/status": lambda: anthropic.classify_sdk_error(
+        sdk.APIStatusError(
+            "down", response=httpx2.Response(529, request=ANTHROPIC_REQUEST), body=None
+        )
+    ),
+    "anthropic/unparseable-2xx": lambda: anthropic.classify_sdk_error(
+        sdk.APIResponseValidationError(
+            response=httpx2.Response(200, request=ANTHROPIC_REQUEST), body=None
+        )
+    ),
+}
+
+
+def _raised(build: Callable[[], object]) -> ProviderError:
+    """The error a builder raises, or returns (the classifiers return theirs)."""
+    try:
+        result = build()
+    except ProviderError as exc:
+        return exc
+    assert isinstance(result, ProviderError), f"neither raised nor returned an error: {result}"
+    return result
+
+
+@pytest.mark.parametrize("case", sorted(ANSWERED))
+def test_an_error_after_the_server_answered_says_it_was_sent(case: str) -> None:
+    """The server replied, so the request was sent and the phase is known."""
+    error = _raised(ANSWERED[case])
+    assert error.request_sent is True
+    assert error.phase in (FailurePhase.STATUS, FailurePhase.BODY)

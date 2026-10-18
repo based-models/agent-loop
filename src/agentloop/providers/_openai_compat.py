@@ -25,6 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at ru
 from agentloop.errors import (
     AuthError,
     BadRequestError,
+    ConfigurationError,
     ContextLengthExceeded,
     FailurePhase,
     InsufficientCredits,
@@ -320,6 +321,8 @@ def response_from_wire(
         raise ResponseInvalid(
             f"{provider} returned a response we cannot normalize: {exc}",
             provider=provider,
+            phase=FailurePhase.BODY,
+            request_sent=True,
         ) from exc
 
 
@@ -329,7 +332,10 @@ def _normalize(
     choices = body.get("choices") or []
     if not choices:
         raise ResponseInvalid(
-            f"{provider} returned no choices", provider=provider
+            f"{provider} returned no choices",
+            provider=provider,
+            phase=FailurePhase.BODY,
+            request_sent=True,
         )
     choice = choices[0]
     message = choice.get("message") or {}
@@ -570,6 +576,14 @@ class OpenAICompatClient:
         if http_client is None:
             self._http = self._httpx.Client(timeout=timeout)
             self._timeout: Any = None  # the client carries it already
+        elif not isinstance(http_client, self._httpx.Client):
+            # An httpx2.Client (the Anthropic SDK's) would send, but its errors would
+            # escape `except httpx.HTTPError` unclassified.
+            kind = type(http_client)
+            raise ConfigurationError(
+                f"the {name} provider needs an httpx.Client for http_client, not "
+                f"{kind.__module__}.{kind.__qualname__}"
+            )
         else:
             self._http = http_client
             # httpx's own default means "the caller did not choose one".
