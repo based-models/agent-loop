@@ -55,6 +55,7 @@ from agentloop.transcript import (
 
 if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
     import anthropic
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -440,7 +441,12 @@ class AnthropicClient:
         api_key: str | None = None,
         model: str = DEFAULT_MODEL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        http_client: httpx.Client | None = None,
     ) -> None:
+        """`http_client` carries trust, proxy and transport settings, as on the
+        OpenAI-compatible clients. The SDK follows redirects by default; set
+        `follow_redirects=False` on your client if you need a 3xx reported.
+        """
         sdk = _sdk()
         self.model = model
         # api_key=None lets the SDK resolve credentials itself:
@@ -450,7 +456,7 @@ class AnthropicClient:
         # max_retries=0: RetryingClient owns retries for every provider, so they are
         # observable and `max_attempts` means the same thing everywhere.
         self._client: anthropic.Anthropic = sdk.Anthropic(
-            api_key=api_key, timeout=timeout, max_retries=0
+            api_key=api_key, timeout=timeout, max_retries=0, http_client=http_client
         )
         self._sdk = sdk
 

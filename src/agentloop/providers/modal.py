@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
+    import httpx
+
 from agentloop.providers._openai_compat import OpenAICompatClient, Quirks, httpx_timeout
 
 DEFAULT_MODEL = "Qwen/Qwen3.6-35B-A3B-FP8"
@@ -21,6 +26,7 @@ def build_modal_client(
     model: str = DEFAULT_MODEL,
     proxy_token_id: str = "",
     proxy_token_secret: str = "",
+    http_client: httpx.Client | None = None,
 ) -> OpenAICompatClient:
     """Proxy tokens are both-or-neither; empty means an --unauthenticated endpoint."""
     headers: dict[str, str] = {}
@@ -33,4 +39,5 @@ def build_modal_client(
         headers=headers,
         quirks=QUIRKS,
         timeout=httpx_timeout(**TIMEOUT_SECONDS),
+        http_client=http_client,
     )

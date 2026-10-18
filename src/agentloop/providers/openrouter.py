@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
+    import httpx
+
 from agentloop.providers._openai_compat import OpenAICompatClient, Quirks, httpx_timeout
 
 BASE_URL = "https://openrouter.ai/api/v1"
@@ -17,6 +22,7 @@ def build_openrouter_client(
     model: str = DEFAULT_MODEL,
     app_url: str | None = None,
     app_name: str | None = None,
+    http_client: httpx.Client | None = None,
 ) -> OpenAICompatClient:
     headers = {"Authorization": f"Bearer {api_key}"}
     if app_url:
@@ -30,4 +36,5 @@ def build_openrouter_client(
         headers=headers,
         quirks=Quirks(),
         timeout=httpx_timeout(**TIMEOUT_SECONDS),
+        http_client=http_client,
     )

@@ -202,3 +202,83 @@ def test_a_reset_connection_is_still_retried(monkeypatch: pytest.MonkeyPatch) ->
     assert inner.calls == 2
     assert response.attempts == 2
 
+
+# --- a caller-supplied httpx client ---
+
+
+def ok_body() -> dict[str, object]:
+    return {
+        "model": "m",
+        "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "hi"}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+
+
+def test_an_injected_client_carries_the_url_and_headers_per_request() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=ok_body())
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))  # no base_url, no headers
+    client = OpenAICompatClient(
+        name="test", model="m", base_url="https://x.test/v1/", headers={"X-Key": "k"},
+        quirks=Quirks(), timeout=httpx.Timeout(7.0), http_client=http,
+    )
+    client.complete(REQUEST)
+    assert str(seen[0].url) == "https://x.test/v1/chat/completions"
+    assert seen[0].headers["x-key"] == "k"
+    assert seen[0].extensions["timeout"]["read"] == 7.0  # ours, as the client had no choice
+
+
+def test_an_injected_clients_own_timeout_wins() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=ok_body())
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(42.0))
+    client = OpenAICompatClient(
+        name="test", model="m", base_url="https://x.test/v1", headers={},
+        quirks=Quirks(), timeout=httpx.Timeout(7.0), http_client=http,
+    )
+    client.complete(REQUEST)
+    assert seen[0].extensions["timeout"]["read"] == 42.0
+
+
+def test_closing_the_adapter_leaves_an_injected_client_open() -> None:
+    http = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+    client = OpenAICompatClient(
+        name="test", model="m", base_url="https://x.test/v1", headers={},
+        quirks=Quirks(), timeout=httpx.Timeout(1.0), http_client=http,
+    )
+    client.close()
+    assert not http.is_closed
+    http.close()
+
+
+def test_closing_the_adapter_closes_a_client_it_built() -> None:
+    client = OpenAICompatClient(
+        name="test", model="m", base_url="https://x.test/v1", headers={},
+        quirks=Quirks(), timeout=httpx.Timeout(1.0),
+    )
+    http = client._http
+    client.close()
+    assert http.is_closed
+
+
+def test_the_builders_pass_the_client_through() -> None:
+    from agentloop.providers.modal import build_modal_client
+    from agentloop.providers.openai import build_openai_client
+    from agentloop.providers.openrouter import build_openrouter_client
+
+    http = httpx.Client()
+    clients = [
+        build_openai_client(api_key="k", http_client=http),
+        build_openrouter_client(api_key="k", http_client=http),
+        build_modal_client(endpoint_url="https://m.test", http_client=http),
+    ]
+    assert all(c._http is http and not c._owns_http for c in clients)
+    http.close()

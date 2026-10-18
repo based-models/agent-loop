@@ -551,15 +551,30 @@ class OpenAICompatClient:
         quirks: Quirks,
         timeout: httpx.Timeout,
         api: Api = "completions",
+        http_client: httpx.Client | None = None,
     ) -> None:
+        """`http_client` is the escape hatch for trust, proxy and transport: build an
+        `httpx.Client` with the `verify`, `proxy` or `transport` you need and pass it in.
+        It stays yours to close. The URL and auth headers are sent per request, so the
+        client needs no `base_url` or default headers; `timeout` is applied per request
+        too, unless the client was given a timeout of its own.
+        """
         self.name = name
         self.model = model
         self._quirks = quirks
         self._codec = codec_for(api)
         self._httpx = _httpx()
-        self._http = self._httpx.Client(
-            base_url=base_url.rstrip("/"), headers=dict(headers), timeout=timeout
-        )
+        self._url = base_url.rstrip("/") + self._codec.path
+        self._headers = dict(headers)
+        self._owns_http = http_client is None
+        if http_client is None:
+            self._http = self._httpx.Client(timeout=timeout)
+            self._timeout: Any = None  # the client carries it already
+        else:
+            self._http = http_client
+            # httpx's own default means "the caller did not choose one".
+            chose_own = http_client.timeout != self._httpx.Timeout(5.0)
+            self._timeout = None if chose_own else timeout
 
     @property
     def api(self) -> Api:
@@ -575,7 +590,10 @@ class OpenAICompatClient:
             request, model=self.model, quirks=self._quirks, provider=self.name
         )
         try:
-            response = self._http.post(codec.path, json=payload)
+            extra = {} if self._timeout is None else {"timeout": self._timeout}
+            response = self._http.post(
+                self._url, json=payload, headers=self._headers, **extra
+            )
         except self._httpx.HTTPError as exc:
             raise classify_transport_error(exc, provider=self.name) from exc
 
@@ -612,8 +630,12 @@ class OpenAICompatClient:
         return codec.response_from_wire(body, provider=self.name, quirks=self._quirks)
 
     def close(self) -> None:
-        """Release the connection pool. Safe to call more than once."""
-        self._http.close()
+        """Release the connection pool. Safe to call more than once.
+
+        A client passed in as `http_client` is left open: it is the caller's.
+        """
+        if self._owns_http:
+            self._http.close()
 
     def __enter__(self) -> OpenAICompatClient:
         return self
