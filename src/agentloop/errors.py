@@ -6,10 +6,28 @@ Provider errors carry enough context to decide whether retrying is worthwhile;
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from agentloop.summary import ConversationSummary
+
+
+class FailurePhase(StrEnum):
+    """Where in the request's life a provider call failed.
+
+    The adapter is the only code that sees the transport exception, so it names the
+    phase once and callers never walk `__cause__` themselves.
+    """
+
+    CONNECT = "connect"  # DNS, TCP, connect timeout
+    TLS = "tls"  # handshake or certificate verification
+    PROXY = "proxy"  # the proxy refused or could not be used
+    SEND = "send"  # writing the request
+    READ = "read"  # waiting for or reading the response
+    STATUS = "status"  # the server answered with an error status
+    REDIRECT = "redirect"  # the server answered with a 3xx
+    BODY = "body"  # a success status whose body we could not use
 
 
 class AgentLoopError(Exception):
@@ -79,12 +97,22 @@ class ProviderError(AgentLoopError):
         status_code: int | None = None,
         retry_after: float | None = None,
         request_id: str | None = None,
+        phase: FailurePhase | None = None,
+        request_sent: bool | None = None,
+        redirect_host: str | None = None,
     ) -> None:
         super().__init__(message)
         self.provider = provider
         self.status_code = status_code
         self.retry_after = retry_after
         self.request_id = request_id
+        self.phase = phase
+        # False: nothing left this machine, so nothing was billed. True: the request
+        # may have reached the provider. None: the adapter could not tell, which is
+        # not the same as False.
+        self.request_sent = request_sent
+        # Host only, never a path or query: those can carry credentials.
+        self.redirect_host = redirect_host
         # Provider attempts made before giving up; RetryingClient sets it.
         self.attempts = 1
         self.retry_wait_seconds = 0.0
@@ -112,6 +140,11 @@ class InsufficientCredits(ProviderError):
     """OpenRouter 402."""
 
 
+class UnexpectedRedirect(ProviderError):
+    """A 3xx. Redirects are never followed: that would resend credentials to a new
+    host, and a login or proxy page is a fault in the environment, not an answer."""
+
+
 # --- their problem, probably temporary: retry ---
 
 class RateLimited(ProviderError):
@@ -121,9 +154,17 @@ class RateLimited(ProviderError):
 
 
 class ProviderUnavailable(ProviderError):
-    """5xx, including Anthropic's 529 overloaded_error."""
+    """5xx (including Anthropic's 529 overloaded_error), 409, or a transient
+    transport failure such as a reset connection. See `phase`."""
 
     retryable = True
+
+
+class ProviderUnreachable(ProviderUnavailable):
+    """This machine cannot reach the provider: TLS verification, DNS or a proxy
+    refusal. A fault in the environment, so retrying cannot help."""
+
+    retryable = False
 
 
 class ProviderTimeout(ProviderError):

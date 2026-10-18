@@ -18,6 +18,7 @@ from agentloop.errors import (
     AuthError,
     BadRequestError,
     ContextLengthExceeded,
+    FailurePhase,
     ModelNotFound,
     ProviderError,
     ProviderTimeout,
@@ -38,6 +39,7 @@ from agentloop.providers._common import (
     user_location,
     web_search_options,
 )
+from agentloop.providers._transport import classify_transport_error
 from agentloop.transcript import (
     Citation,
     ContentPart,
@@ -385,13 +387,16 @@ def classify_sdk_error(exc: Exception) -> ProviderError:
     """
     sdk = _sdk()
     message = str(exc)
-    if isinstance(exc, sdk.APITimeoutError):  # before its parent, APIConnectionError
-        return ProviderTimeout(message, provider=PROVIDER)
-    if isinstance(exc, sdk.APIConnectionError):
-        return ProviderUnavailable(message, provider=PROVIDER)
+    if isinstance(exc, sdk.APIConnectionError):  # APITimeoutError is a subclass
+        error = classify_transport_error(exc, provider=PROVIDER)
+        if isinstance(exc, sdk.APITimeoutError) and not isinstance(error, ProviderTimeout):
+            return ProviderTimeout(message, provider=PROVIDER)
+        return error
     if not isinstance(exc, sdk.APIStatusError):
         # A 2xx the SDK could not parse, and anything else it raises.
-        return ResponseInvalid(message, provider=PROVIDER)
+        return ResponseInvalid(
+            message, provider=PROVIDER, phase=FailurePhase.BODY, request_sent=True
+        )
 
     status = exc.status_code
     kwargs: dict[str, Any] = {
@@ -399,6 +404,8 @@ def classify_sdk_error(exc: Exception) -> ProviderError:
         "status_code": status,
         "retry_after": parse_retry_after(exc.response.headers.get("retry-after")),
         "request_id": exc.request_id,
+        "phase": FailurePhase.STATUS,
+        "request_sent": True,
     }
     if status in (401, 403):
         return AuthError(message, **kwargs)
