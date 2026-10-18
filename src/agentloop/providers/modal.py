@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
     import httpx
 
-from agentloop.providers._openai_compat import OpenAICompatClient, Quirks, httpx_timeout
+from agentloop.providers._openai_compat import OpenAICompatClient, Quirks, timeout_with_read
 
 DEFAULT_MODEL = "Qwen/Qwen3.6-35B-A3B-FP8"
 # Cold starts spin up a container and load weights: minutes, not seconds.
@@ -27,6 +27,7 @@ def build_modal_client(
     proxy_token_id: str = "",
     proxy_token_secret: str = "",
     http_client: httpx.Client | None = None,
+    timeout_seconds: float | None = None,
 ) -> OpenAICompatClient:
     """Proxy tokens are both-or-neither; empty means an --unauthenticated endpoint."""
     headers: dict[str, str] = {}
@@ -38,6 +39,7 @@ def build_modal_client(
         base_url=f"{endpoint_url.rstrip('/')}/v1",
         headers=headers,
         quirks=QUIRKS,
-        timeout=httpx_timeout(**TIMEOUT_SECONDS),
+        timeout=timeout_with_read(TIMEOUT_SECONDS, timeout_seconds),
+        timeout_explicit=timeout_seconds is not None,
         http_client=http_client,
     )

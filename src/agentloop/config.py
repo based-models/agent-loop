@@ -62,6 +62,11 @@ class Settings(BaseModel):
     # every provider -- the Anthropic SDK's own retries are switched off.
     max_attempts: int = Field(default=3, ge=1)
 
+    # Seconds to wait on one model call. None keeps each provider's own default. For the
+    # OpenAI-compatible providers it replaces the READ timeout (connect, write and pool
+    # keep theirs); for Anthropic it is the SDK's overall request timeout.
+    timeout_seconds: float | None = Field(default=None, gt=0)
+
     @field_validator(
         "anthropic_api_key",
         "openrouter_api_key",
@@ -121,6 +126,7 @@ class Settings(BaseModel):
             # The raw string: pydantic coerces it, and rejects "three" with a
             # ValidationError that names the field, where int() would not.
             max_attempts=env.get("LLM_MAX_ATTEMPTS", "3"),  # type: ignore[arg-type]
+            timeout_seconds=env.get("LLM_TIMEOUT_SECONDS") or None,  # type: ignore[arg-type]
         )
 
 
@@ -163,7 +169,9 @@ def _build_anthropic(settings: Settings, http_client: Any) -> LLMClient:
     from agentloop.providers.anthropic import AnthropicClient  # lazy: keeps the extra optional
 
     key = settings.anthropic_api_key
+    timeout = {} if settings.timeout_seconds is None else {"timeout": settings.timeout_seconds}
     return AnthropicClient(
+        **timeout,
         # None lets the SDK resolve credentials itself.
         api_key=key.get_secret_value() if key else None,
         model=settings.anthropic_model,
@@ -180,6 +188,7 @@ def _build_openrouter(settings: Settings, http_client: Any) -> LLMClient:
         api_key=settings.openrouter_api_key.get_secret_value(),
         model=settings.openrouter_model,
         http_client=http_client,
+        timeout_seconds=settings.timeout_seconds,
     )
 
 
@@ -203,6 +212,7 @@ def _build_modal(settings: Settings, http_client: Any) -> LLMClient:
         proxy_token_id=token_id.get_secret_value() if token_id else "",
         proxy_token_secret=token_secret.get_secret_value() if token_secret else "",
         http_client=http_client,
+        timeout_seconds=settings.timeout_seconds,
     )
 
 
@@ -216,4 +226,5 @@ def _build_openai(settings: Settings, http_client: Any) -> LLMClient:
         model=settings.openai_model,
         api=settings.openai_api,
         http_client=http_client,
+        timeout_seconds=settings.timeout_seconds,
     )

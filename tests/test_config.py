@@ -255,3 +255,40 @@ def test_an_httpx2_client_reaches_anthropic() -> None:
     client.close()  # type: ignore[attr-defined]
     assert not http.is_closed  # still the caller's
     http.close()
+
+
+# --- timeout_seconds ---
+
+
+def test_timeout_is_read_from_the_mapping() -> None:
+    assert Settings.from_env({"LLM_TIMEOUT_SECONDS": "42"}).timeout_seconds == 42
+    assert Settings.from_env({}).timeout_seconds is None
+    assert Settings.from_env({"LLM_TIMEOUT_SECONDS": ""}).timeout_seconds is None
+
+
+def test_a_timeout_must_be_positive() -> None:
+    with pytest.raises(ValidationError, match="timeout_seconds"):
+        settings(timeout_seconds=0)
+
+
+def test_the_timeout_reaches_the_openai_compatible_read_timeout() -> None:
+    client = build_client(settings(provider="openai", openai_api_key="k", timeout_seconds=7))
+    inner = client._inner  # type: ignore[attr-defined]
+    assert inner._http.timeout.read == 7
+    assert inner._http.timeout.connect == 10.0  # the provider's own value is kept
+
+
+def test_an_explicit_timeout_beats_a_supplied_clients() -> None:
+    import httpx
+
+    own = httpx.Client(timeout=httpx.Timeout(5.0))  # httpx's default: looks unchosen
+    chosen = httpx.Client(timeout=httpx.Timeout(99.0))
+    for http_client, seconds, expect_override in [
+        (own, None, True), (chosen, None, False), (chosen, 7.0, True),
+    ]:
+        client = build_client(
+            settings(provider="openai", openai_api_key="k", timeout_seconds=seconds),
+            http_client=http_client,
+        )
+        sent = client._inner._timeout  # type: ignore[attr-defined]
+        assert (sent is not None) is expect_override

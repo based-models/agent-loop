@@ -72,6 +72,9 @@ class ToolSpec(BaseModel):
     # Seconds one call may run before the model is told it timed out. None (the
     # default) waits forever. Python cannot kill a thread: see `_call_with_timeout`.
     timeout_seconds: float | None = Field(default=None, gt=0)
+    # False for a handler that is not thread-safe (a shared DB cursor, a non-atomic
+    # counter). A turn that calls any such tool runs ALL its calls one after another.
+    parallel_safe: bool = True
 
 
 class Registry:
@@ -234,6 +237,14 @@ def reported_tool_name(registry: Registry, name: str) -> str:
     return name if registry.get(name) is not None else UNREGISTERED_TOOL
 
 
+def _all_parallel_safe(calls: Sequence[ToolCallPart], registry: Registry) -> bool:
+    for call in calls:
+        spec = registry.get(call.tool_name)
+        if spec is not None and not spec.parallel_safe:
+            return False
+    return True
+
+
 def run_tools(
     content: Sequence[ContentPart],
     registry: Registry,
@@ -248,8 +259,8 @@ def run_tools(
     calls = [part for part in content if isinstance(part, ToolCallPart)]
     if not calls:
         return []
-    if len(calls) == 1:
-        return [_run_one(calls[0], registry, deps, watcher)]
+    if len(calls) == 1 or not _all_parallel_safe(calls, registry):
+        return [_run_one(call, registry, deps, watcher) for call in calls]
 
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_TOOLS) as pool:
         futures = [

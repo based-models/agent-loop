@@ -42,6 +42,10 @@ A provider that pauses a turn (`StopReason.PAUSED`, for example Anthropic's `pau
 a hosted tool runs) is continued without sending a user message: the continuation joins the
 same assistant message, and each continuation counts as an iteration.
 
+If `transcript` ends in tool calls with no results (a log cut off while tools ran), the loop
+runs them before the first model call and then validates the transcript with
+`check_invariants()`, so a bad one raises `TranscriptError` instead of a provider 400.
+
 The deadline is checked between turns. A provider call, its retries, or a started tool batch
 may finish after it. `None` disables the deadline. Exhaustion raises `LoopBudgetExceeded`;
 provider errors propagate unchanged.
