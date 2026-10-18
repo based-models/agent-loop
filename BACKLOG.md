@@ -376,6 +376,52 @@ genuine async twin:
 Additive, not a rewrite — the real cost is item 9, doubling the provider and loop test
 surface.
 
+## A failed turn reports `0` tokens, not "not reported"
+
+**Status:** not implemented. `TurnRecord.input_tokens` / `output_tokens` are plain `int = 0`
+(`summary.py`), and `_add_turn` (`loop.py`) fills `0` for a call that raised before
+answering, because there was no response to read usage from. The project rule is that `None`
+means "not reported", never zero (`Usage`, cost, cache tokens), and the summary's own `usage`
+follows it. The timeline does not.
+
+**Concrete trigger:** turn on `SummaryOptions(timeline=True)` and let one model call fail. The
+failed `TurnRecord` says it used 0 input and 0 output tokens, which reads as "measured, and
+free" rather than "unknown". A consumer summing the timeline cannot tell a failed call from a
+cheap one without also checking `error_type`.
+
+**What implementing it takes:** make the two fields `int | None` on `TurnRecord`, set `None`
+when `response is None`, and update anything that sums them. This changes a public model
+(`TurnRecord` is in `__all__`), so it is a breaking change for anyone doing arithmetic on the
+fields. It needs a CHANGELOG "Changed" entry and a decision on whether it ships in a minor
+bump while the library is `0.x`.
+
+**Why it was deferred:** found while building the failure telemetry (PR 11); changing a public
+field's type did not belong in a change about error facts.
+
+## `OTelObserver` has no `redact`, unlike `EventTraceObserver`
+
+**Status:** not implemented. `EventTraceObserver(capture_content=True)` refuses to start
+without a `redact` function (or an explicit `allow_unredacted=True`) and redacts every
+captured string before clipping it. `OTelObserver(capture_content=True)` takes no `redact`:
+system instructions, tool arguments and results, and error and retry messages go to the
+exporter as written. Error details are clipped to `ERROR_DETAIL_CHARS` (200), but that limits
+size, not content. `Agent(trace=True)` cannot enable capture at all, since `_with_tracing`
+does not pass `capture_content` through.
+
+**Concrete trigger:** capture is on to debug a tool, and a tool result or a provider's 400
+body quotes an API key or a customer record. The event trace would redact it; the span
+exports it.
+
+**What implementing it takes:** a `redact: Callable[[str], str] | None` and
+`allow_unredacted` on `OTelObserver` with the same rules as the event trace (capture without
+one raises `ConfigurationError`; redact before clipping; a redactor that raises drops the
+attribute rather than writing it). Then decide whether `Agent(trace=...)` should accept
+capture options or stay off by design. The redaction helpers in `events.py` could move to a
+shared module so the two observers cannot drift.
+
+**Why it was deferred:** found while building the failure telemetry (PR 11), which adds only
+content-free attributes to spans, so it neither widens nor narrows this gap.
+
 ## Recorded wire-body fixtures
 
 `tests/fixtures/` was not added: the adapters' inline tests already cover the known
