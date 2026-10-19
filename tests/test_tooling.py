@@ -329,3 +329,38 @@ def test_one_hung_tool_does_not_hold_up_its_siblings() -> None:
 def test_a_timeout_must_be_positive() -> None:
     with pytest.raises(ValueError):
         ToolSpec(name="t", description="d", parameters=schema(), handler=boom, timeout_seconds=0)
+
+
+# --- parallel_safe ---
+
+
+def test_an_unsafe_tool_makes_the_whole_turn_sequential() -> None:
+    running = 0
+    overlap = 0
+
+    def watch(deps: ToyDeps) -> str:
+        nonlocal running, overlap
+        running += 1
+        overlap = max(overlap, running)
+        time.sleep(0.05)
+        running -= 1
+        return "ok"
+
+    def run(safe: bool) -> int:
+        nonlocal overlap
+        overlap = 0
+        registry = Registry([
+            ToolSpec(name="a", description="d", parameters=schema(), handler=watch,
+                     parallel_safe=safe),
+            ToolSpec(name="b", description="d", parameters=schema(), handler=watch),
+        ])
+        results = run_tools(
+            [ToolCallPart(id="1", tool_name="a", arguments={}),
+             ToolCallPart(id="2", tool_name="b", arguments={})],
+            registry, ToyDeps(),
+        )
+        assert [r.call_id for r in results] == ["1", "2"]
+        return overlap
+
+    assert run(safe=True) == 2
+    assert run(safe=False) == 1

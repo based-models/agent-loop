@@ -41,6 +41,35 @@ DEFAULT_AGENT_NAME = "agentloop"
 ERROR_DETAIL_CHARS = 200
 
 
+def _provider_installed() -> bool:
+    """Whether a real tracer provider is the process-global one.
+
+    Unset, OpenTelemetry's global is a proxy that forwards to nothing; it can also be
+    set explicitly to the no-op provider. Either way spans are thrown away.
+    """
+    provider = trace.get_tracer_provider()
+    return not isinstance(provider, (trace.ProxyTracerProvider, trace.NoOpTracerProvider))
+
+
+_warned_no_provider = False
+_warn_lock = threading.Lock()
+
+
+def _warn_once_if_no_provider() -> None:
+    global _warned_no_provider
+    if _provider_installed():
+        return
+    with _warn_lock:
+        if _warned_no_provider:
+            return
+        _warned_no_provider = True
+    logger.warning(
+        "tracing is on but no OpenTelemetry tracer provider is installed, so every span "
+        "is discarded. Call agentloop.tracing.configure_tracing(endpoint) or install your "
+        "own provider before running."
+    )
+
+
 def _failure_attributes(error: ProviderError, *, prefix: str) -> dict[str, Any]:
     """Phase and send state as span attributes; None (unknown) is omitted, never False."""
     attributes: dict[str, Any] = {}
@@ -144,6 +173,7 @@ class OTelObserver:
                 "runs need one observer (one traced Agent) each"
             )
         try:
+            _warn_once_if_no_provider()
             with _tracer.start_as_current_span(
                 f"invoke_agent {self._agent_name}",
                 attributes={
@@ -444,6 +474,14 @@ def configure_tracing(endpoint: str, *, service_name: str = "agentloop") -> Trac
             "Install: pip install 'based-models-agentloop[otel]'"
         ) from exc
 
+    if _provider_installed():
+        # OpenTelemetry honours set_tracer_provider once per process. A second provider
+        # would look live and receive no spans, while the first is never flushed.
+        logger.warning(
+            "a tracer provider is already installed; configure_tracing() cannot replace "
+            "it, so the provider it returns will receive NO spans. Reuse the first "
+            "provider (trace.get_tracer_provider()) instead of calling this twice."
+        )
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
     provider.add_span_processor(
         BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint.rstrip('/')}/v1/traces"))

@@ -33,6 +33,10 @@ Tracing creates one top-level span for the conversation, one child span for each
 request, and one span for each local tool call. A span is one timed operation in an
 OpenTelemetry trace. Retries appear as events on the related model-request span.
 
+Tracing needs a provider installed first. A traced conversation with none logs one warning
+and discards its spans; calling `configure_tracing()` a second time logs a warning too, because
+OpenTelemetry keeps the first provider and the returned one receives nothing.
+
 Prompts, tool arguments, tool results, and provider error messages are not captured by
 default. Construct an
 `OTelObserver(..., capture_content=True, redact=scrub)` (a redactor is required, as for the event

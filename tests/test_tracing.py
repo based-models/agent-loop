@@ -565,3 +565,46 @@ def test_an_unregistered_tool_name_stays_out_of_spans(exporter: InMemorySpanExpo
     spans = exporter.get_finished_spans()
     assert "made_up_xyz" not in str([(s.name, dict(attrs(s))) for s in spans])
     assert "execute_tool <unregistered>" in [s.name for s in spans]
+
+
+# --- setup mistakes are not silent ---
+
+
+def test_a_traced_run_with_no_provider_warns_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from agentloop import tracing
+
+    monkeypatch.setattr(tracing, "_provider_installed", lambda: False)
+    monkeypatch.setattr(tracing, "_warned_no_provider", False)
+    observer = OTelObserver(provider="fake", model="m")
+    with caplog.at_level("WARNING", logger="agentloop.tracing"):
+        for _ in range(2):
+            with observer.conversation():
+                pass
+    assert sum("no OpenTelemetry tracer provider" in r.message for r in caplog.records) == 1
+
+
+def test_no_warning_when_a_provider_is_installed(
+    exporter: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from agentloop import tracing
+
+    monkeypatch.setattr(tracing, "_warned_no_provider", False)
+    with (
+        caplog.at_level("WARNING", logger="agentloop.tracing"),
+        OTelObserver(provider="fake", model="m").conversation(),
+    ):
+        pass
+    assert not caplog.records
+
+
+def test_configure_tracing_twice_says_the_second_is_ignored(
+    exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+) -> None:
+    from agentloop.tracing import configure_tracing
+
+    with caplog.at_level("WARNING", logger="agentloop.tracing"):
+        configure_tracing("http://localhost:4318").shutdown()
+    assert any("already installed" in r.message for r in caplog.records)

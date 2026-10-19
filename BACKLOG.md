@@ -74,89 +74,40 @@ Left over:
 
 ## Medium priority
 
-### 13. Resuming a transcript that ends mid-turn sends an invalid request
+Items 13, 15, 16, 17 and 18 landed on `feature/medium-priority` (PR pending). Item 14 was checked live
+(below). Left over:
 
-**Status:** gap. `Agent.converse` / `run_conversation` send `transcript.messages` as they
-are and never call `check_invariants()`. `from_jsonl` deliberately loads mid-turn logs, so
-this is a supported state.
+### 13. Resuming a transcript that ends mid-turn: the paused case
 
-**Concrete triggers:**
-- The process dies while tools run, and the saved transcript ends with an assistant message
-  whose tool calls have no results. Resuming sends unanswered calls, every provider rejects
-  them with a 400, and that `BadRequestError` is not retried.
-- A turn paused (`StopReason.PAUSED`) and then hit a provider error. The new `_Run` starts
-  with `continuing=False`, so the continuation becomes a second consecutive assistant
-  message instead of extending the first.
+Unanswered tool calls are now run before the first model call, and `check_invariants()` runs
+once up front. Still open: a turn that paused (`StopReason.PAUSED`) and then hit a provider
+error. The new `_Run` starts with `continuing=False`, so the continuation becomes a second
+consecutive assistant message instead of extending the first. `Message` would have to record
+that the turn is open, for example in `Origin`.
 
-**What implementing it takes:** a preflight in `drive()`. Pending tool calls should be
-either executed before the first model call (a natural resume) or rejected with a
-`TranscriptError` that says how to fix it. That is an API decision. For the paused case,
-`Message` would have to record that the turn is open, for example in `Origin`.
+### 14. Responses reasoning replay without `include` (checked live, 2026-10-18)
 
-### 14. Verify Responses reasoning replay without `include: ["reasoning.encrypted_content"]`
+Confirmed for `o4-mini`: a tool-using turn with `store: false` and no `include` returned a
+`reasoning` item with a non-empty `encrypted_content`, and replaying the transcript with it was
+accepted. The `_openai_responses.py` docstring is right for that model; no `include` is needed.
+Not covered: `gpt-5.5` (the `.env` model) produced no reasoning item at its default effort
+(0 reasoning tokens), so it did not exercise replay. Recheck if a request option for reasoning
+effort is added. Item 21's fixture for a Responses reasoning item is still unrecorded.
 
-**Status:** needs a live check. The docstring in `_openai_responses.py` says the encrypted
-reasoning content "`store: false` returns by default". OpenAI's API reference documents it
-as an opt-in `include` value for stateless use. If it is opt-in, reasoning items are
-replayed without their encrypted content. Reasoning models then lose their chain of
-thought across tool calls, or the request is rejected.
+### 17. Model-aware provider `Quirks`: what is left
 
-**What implementing it takes:** run one tool-using turn on a reasoning model live and check
-`output[*].encrypted_content`. If it is missing, add `"reasoning.encrypted_content"` to
-`include` whenever the model may reason, and save the captured body as a fixture (item 21).
+`providers/openai.py` now picks `Quirks` by model-id prefix (`MODEL_QUIRKS`, `quirks_for_model`),
+and `build_openai_client(quirks=...)` overrides it. The table holds only the o-series
+(`o1`, `o3`, `o4`). Not done: other OpenAI families that reject parameters (add rows as they
+are confirmed live), and OpenRouter and Modal, which stay provider-wide because their models
+vary too much for one table.
 
-### 15. No way to mark a tool as unsafe to run in parallel
+### 18. Tracing setup warnings: what is left
 
-**Status:** not implemented. `run_tools` always runs a turn with two or more tool calls in
-parallel, on a fixed `ThreadPoolExecutor(max_workers=8)` (`tooling.py`). There is no
-`ToolSpec` flag for a handler that isn't thread-safe: a shared DB cursor, a non-atomic
-shared counter, an SDK client not documented as thread-safe.
-
-**Concrete trigger:** two tools that both mutate the same plain `list` or
-`sqlite3.Connection` without a lock, called by the model in one turn. Corruption or
-exceptions show up only intermittently, when a model happens to call them together.
-
-**What implementing it takes:** a `ToolSpec.parallel_safe: bool = True` (or similar) that
-`run_tools` checks. Any turn that contains an unsafe call runs sequentially.
-
-### 16. No per-provider timeout override through `Settings` / `build_client()`
-
-**Status:** not implemented. Timeouts are hard-coded per adapter (`anthropic.py`'s
-`DEFAULT_TIMEOUT_SECONDS`, the `TIMEOUT_SECONDS` dicts in `openrouter.py`, `modal.py` and
-`openai.py`). Someone who needs a longer read timeout must call `build_<provider>_client()`
-directly and give up `Settings.from_env()`. Item 2's `http_client` does not cover the
-Anthropic path, and its timeout heuristic is fragile (item 23).
-
-**What implementing it takes:** an optional `timeout_seconds` (or a richer shape) on
-`Settings`, passed through each `_build_*` helper in `config.py` to the provider builder's
-`timeout=`.
-
-### 17. Model-aware provider `Quirks`
-
-**Status:** not implemented. `Quirks` is chosen once per *provider*, not per *model*.
-`providers/openai.py` sends `parallel_tool_calls` on every request. OpenAI's reasoning
-models reject that parameter and its non-reasoning chat models accept it, and the only way
-around it is two hand-built clients.
-
-**What implementing it takes:** a second selection axis, probably a small `model -> Quirks`
-override table (regex or prefix match) that `build_openai_client(model=...)` checks before
-falling back to the provider default. It needs real design work: what to match on, what
-happens when nothing matches, and how Modal's provider-wide quirks interact.
-
-### 18. Tracing setup fails silently (`configure_tracing()` twice; `trace=True` without it)
-
-**Status:** not implemented. Two symptoms with one cause:
-
-- OpenTelemetry's global `trace.set_tracer_provider()` takes effect only once per process.
-  A second `configure_tracing()` returns a provider that looks live but receives no spans.
-  The real first provider may then never be flushed.
-- `Agent(trace=True)` without `configure_tracing()` throws every span away, and nothing
-  tells the user.
-
-**What implementing it takes:** detect reliably whether the global provider is still the
-default proxy or no-op one. Then warn (or raise) on a second install, and log one warning
-the first time `OTelObserver.conversation()` runs with no provider installed. The
-detection has to be tested across the OpenTelemetry SDK versions the package supports.
+A second `configure_tracing()` and a traced run with no provider now log a warning. It warns
+rather than raises, and the check uses `ProxyTracerProvider` / `NoOpTracerProvider` from the
+OpenTelemetry API. It is untested against older SDK versions than the one in the dev
+environment.
 
 ---
 

@@ -434,3 +434,37 @@ def test_a_turn_that_keeps_pausing_hits_the_iteration_budget() -> None:
     ])
     with pytest.raises(LoopBudgetExceeded, match="3 iterations"):
         run(client, max_iterations=3)
+
+
+# --- resuming a transcript that ends mid-turn ---
+
+
+def test_a_resumed_transcript_with_unanswered_calls_runs_them_first() -> None:
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    transcript.add_assistant_message([echo_call("c1", "left behind")])
+    client = FakeClient(resp(TextPart(text="done")))
+    run_conversation(transcript, client, REGISTRY, ToyDeps())
+    # the request that went out already carried the answered call
+    sent = client.requests[0].messages
+    assert [m.role for m in sent] == ["user", "assistant", "user"]
+    assert "left behind" in sent[2].content[0].content  # type: ignore[union-attr]
+    transcript.check_invariants()
+
+
+def test_an_invalid_resumed_transcript_fails_before_any_model_call() -> None:
+    from agentloop.errors import TranscriptError
+
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    transcript.add_assistant_message([TextPart(text="x")])
+    # a hosted-tool part in a user message is a state no provider accepts
+    transcript.messages.append(
+        transcript.messages[0].model_copy(
+            update={"content": (HostedToolPart(kind="web_search"),)}
+        )
+    )
+    client = FakeClient(resp(TextPart(text="never")))
+    with pytest.raises(TranscriptError):
+        run_conversation(transcript, client, REGISTRY, ToyDeps())
+    assert client.requests == []
