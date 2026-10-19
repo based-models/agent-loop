@@ -35,7 +35,8 @@ OpenTelemetry trace. Retries appear as events on the related model-request span.
 
 Prompts, tool arguments, tool results, and provider error messages are not captured by
 default. Construct an
-`OTelObserver(..., capture_content=True)` only when your data-handling policy permits that
+`OTelObserver(..., capture_content=True, redact=scrub)` (a redactor is required, as for the event
+trace) only when your data-handling policy permits that
 content to leave the process. One `OTelObserver` can trace only one conversation at a time.
 
 The conversation span records its status, identifiers, iterations, limits, timing, retries,

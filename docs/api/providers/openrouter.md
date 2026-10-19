@@ -34,6 +34,10 @@ client = build_openrouter_client(
 )
 ```
 
+It speaks Chat Completions (`api="completions"`) and has no hosted tools
+(`hosted_tools` is empty). For reasoning models it replays `reasoning_details` from the
+message's `Origin`, unchanged and in order.
+
 The returned client exposes `name`, `model`, `complete(request)`, `close()`, and context
 manager methods. Add `RetryingClient` explicitly or construct through `build_client` for
 automatic retries.

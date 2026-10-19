@@ -73,3 +73,18 @@ A TLS, DNS or proxy failure raises `ProviderUnreachable` immediately, without re
 
 See the [provider reference](../api/providers/index.md) or
 [implement a custom provider](custom-providers.md).
+
+## Chat Completions or Responses
+
+OpenAI can be reached over two APIs, chosen with `OPENAI_API` (`responses`, the default, or
+`completions`; `Settings.openai_api`).
+
+| | Chat Completions | Responses |
+|---|---|---|
+| Spoken by | OpenAI, OpenRouter, Modal/vLLM | OpenAI |
+| Hosted tools (web search) | Not supported | Supported |
+| Reasoning state | Provider-specific (OpenRouter `reasoning_details`) | Reasoning items replayed |
+
+Responses runs **stateless**: every request sends `store: false` and the full transcript, and
+item ids are stripped on replay, so nothing depends on the provider remembering a conversation.
+OpenRouter and Modal always use Chat Completions.

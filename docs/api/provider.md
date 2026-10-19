@@ -83,6 +83,16 @@ complete(request: ModelRequest) -> ModelResponse
 
 See [custom providers](../guides/custom-providers.md) for an implementation.
 
+## `supported_hosted_tools`
+
+```text
+supported_hosted_tools(client) -> frozenset[str]
+```
+
+The hosted tool kinds a client can run: its optional `hosted_tools` attribute, or an empty set
+when it has none. A client that says nothing supports nothing, so a custom provider needs no
+new attribute to stay an `LLMClient`.
+
 ## `HostedTool`
 
 A provider-run capability declared on each request. `kind` names the capability, such as

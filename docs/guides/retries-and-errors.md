@@ -17,7 +17,9 @@ except AgentLoopError as error:
 ```
 
 `RateLimited`, `ProviderUnavailable`, `ProviderTimeout`, and `ResponseInvalid` are retryable.
-Authentication, bad-request, context-length, missing-model, and credit errors are not.
+Authentication, bad-request, context-length, missing-model, and credit errors are not. That
+includes an OpenAI 429 whose `type`/`code` is `insufficient_quota` or
+`credit_balance_exhausted`: it raises `InsufficientCredits` and is not retried.
 
 `ProviderUnreachable` (TLS verification, DNS, a refusing proxy) and `UnexpectedRedirect` are
 not retried, because retrying cannot fix them. Both are faults in the environment. A refused

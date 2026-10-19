@@ -22,3 +22,14 @@ lines are ignored. Invalid or truncated JSON raises instead of silently discardi
 mid-turn. Call `check_invariants()` before sending a loaded transcript to a provider.
 
 See the [`transcript` API](../api/transcript.md).
+
+## `Message.origin`
+
+An assistant `Message` may carry an `Origin`: the provider's own wire form of that turn
+(`provider`, `api`, `model`, `raw`). Adapters replay it instead of rebuilding the turn from the
+canonical parts, which keeps things the canonical form cannot express, such as Anthropic's
+encrypted search results and signed thinking, or OpenRouter's `reasoning_details`.
+
+It can be large. JSONL keeps it so a resumed conversation replays exactly. Drop it
+(`message.model_copy(update={"origin": None})`) if you accept a replay rebuilt from canonical
+parts, or switch providers: an origin from a different provider or API is ignored on replay.

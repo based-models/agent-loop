@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 type BudgetKind = Literal["iterations", "deadline"]
 
+# What telemetry reports for a call to a tool that is not registered. The model wrote
+# that name, so it is unbounded and not ours to export (see CLAUDE.md invariants). The
+# model itself still gets the real name back in its "Unknown tool" result.
+UNREGISTERED_TOOL = "<unregistered>"
+
 
 class LoopObserver(Protocol):
     """Every interesting thing that happens. Implementations may no-op."""

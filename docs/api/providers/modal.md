@@ -36,5 +36,8 @@ client = build_modal_client(
 )
 ```
 
+It speaks Chat Completions (`api="completions"`) and has no hosted tools
+(`hosted_tools` is empty).
+
 The returned client exposes `name`, `model`, `complete(request)`, `close()`, and context
 manager methods. Construct through `build_client` or wrap with `RetryingClient` for retries.

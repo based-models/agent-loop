@@ -16,6 +16,7 @@ leaving application policy in your code.
 - [Tools and approval](guides/tools.md)
 - [Conversations and transcripts](guides/conversations.md)
 - [Providers](guides/providers.md)
+- [Hosted tools and web search](guides/hosted-tools.md)
 - [Implement a custom provider](guides/custom-providers.md)
 - [Conversation summaries](guides/summaries.md)
 - [Event traces](guides/event-trace.md)

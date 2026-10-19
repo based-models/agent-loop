@@ -6,10 +6,16 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from agentloop.errors import LoopBudgetExceeded
-from agentloop.loop import ListObserver, run_conversation
+from agentloop.loop import (
+    MAX_TOKENS_CEILING,
+    ListObserver,
+    run_conversation,
+    run_conversation_result,
+)
 from agentloop.provider import HostedTool, ModelRequest, ModelResponse, StopReason, Usage
 from agentloop.providers._openai_compat import Quirks, response_from_wire
 from agentloop.providers.fake import FakeClient
+from agentloop.summary import ConversationStatus, SummaryOptions
 from agentloop.tooling import ApprovalHook, Registry, ToolSpec, allow_all
 from agentloop.transcript import (
     ContentPart,
@@ -110,6 +116,82 @@ def test_a_turn_truncated_mid_call_is_discarded() -> None:
     assert transcript.messages[-1].content[0].text == "recovered"  # type: ignore[union-attr]
     # and the retry asked for more room
     assert client.requests[1].max_tokens > client.requests[0].max_tokens
+
+
+def test_a_truncation_that_cannot_grow_stops_instead_of_retrying() -> None:
+    # Already at the ceiling: the identical request would bill the same cut-off again.
+    truncated = resp(echo_call("c1", "hel"), stop=StopReason.MAX_TOKENS)
+    client = FakeClient(truncated, truncated, truncated)
+    with pytest.raises(LoopBudgetExceeded) as caught:
+        run(client, max_tokens=MAX_TOKENS_CEILING)
+    assert caught.value.kind == "max_tokens"
+    assert caught.value.summary is not None
+    assert caught.value.summary.status is ConversationStatus.TOKEN_LIMIT
+    assert caught.value.summary.status.budget_exhausted
+    assert len(client.requests) == 1
+
+
+def test_repeated_truncations_stop_once_the_budget_reaches_the_ceiling() -> None:
+    truncated = resp(echo_call("c1", "hel"), stop=StopReason.MAX_TOKENS)
+    client = FakeClient(*[truncated] * 10)
+    with pytest.raises(LoopBudgetExceeded):
+        run(client, max_tokens=16_000)
+    # 16k -> 32k -> 64k, then it cannot grow: three calls, not max_iterations.
+    assert [r.max_tokens for r in client.requests] == [16_000, 32_000, 64_000]
+
+
+def test_a_budget_above_the_ceiling_is_never_lowered() -> None:
+    client = FakeClient(
+        resp(echo_call("c1", "hel"), stop=StopReason.MAX_TOKENS),
+        resp(TextPart(text="never reached")),
+    )
+    with pytest.raises(LoopBudgetExceeded):
+        run(client, max_tokens=100_000)
+    assert [r.max_tokens for r in client.requests] == [100_000]
+
+
+def test_an_empty_truncated_turn_raises_the_budget() -> None:
+    # A reasoning model that spent the whole budget thinking: nothing readable at all.
+    client = FakeClient(
+        resp(stop=StopReason.MAX_TOKENS),
+        resp(TextPart(text="recovered")),
+    )
+    transcript = run(client)
+    assert [m.role for m in transcript.messages] == ["user", "assistant"]
+    assert client.requests[1].max_tokens > client.requests[0].max_tokens
+
+
+def test_an_empty_turn_that_was_not_truncated_is_still_invalid() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        resp(stop=StopReason.END_TURN)
+
+
+def test_a_made_up_tool_name_is_reported_under_one_bucket() -> None:
+    watcher = ListObserver()
+    client = FakeClient(
+        resp(ToolCallPart(id="c1", tool_name="invented_xyz", arguments={}),
+             stop=StopReason.TOOL_USE),
+        resp(TextPart(text="done")),
+    )
+    result = run_conversation_result(
+        _transcript(), client, REGISTRY, ToyDeps(), observer=watcher,
+        summary_options=SummaryOptions(timeline=True),
+    )
+    summary = result.summary
+    assert summary.tool_calls == {"<unregistered>": 1}
+    assert summary.tool_errors == {"<unregistered>": 1}
+    assert "invented_xyz" not in summary.model_dump_json()
+    # the model still hears the real name
+    reply = result.transcript.messages[2].content[0]
+    assert "invented_xyz" in reply.content  # type: ignore[union-attr]
+    started = [call for kind, call in watcher.events if kind == "tool_start"]
+    assert [c.tool_name for c in started] == ["<unregistered>"]  # type: ignore[attr-defined]
+
+
+def _transcript() -> Transcript:
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    return transcript
 
 
 def test_a_truncated_text_turn_is_kept() -> None:

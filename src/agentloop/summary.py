@@ -32,6 +32,7 @@ class ConversationStatus(StrEnum):
     TRUNCATED = "truncated"  # the final answer hit max_tokens
     ITERATION_LIMIT = "iteration_limit"  # LoopBudgetExceeded: out of iterations
     DEADLINE_EXCEEDED = "deadline_exceeded"  # LoopBudgetExceeded: out of wall clock
+    TOKEN_LIMIT = "token_limit"  # LoopBudgetExceeded: a tool call that cannot fit max_tokens
     PROVIDER_ERROR = "provider_error"  # a ProviderError, after any retries
     ERROR = "error"  # anything else raised
     CANCELLED = "cancelled"  # KeyboardInterrupt and friends
@@ -50,6 +51,7 @@ class ConversationStatus(StrEnum):
         return self in {
             ConversationStatus.ITERATION_LIMIT,
             ConversationStatus.DEADLINE_EXCEEDED,
+            ConversationStatus.TOKEN_LIMIT,
         }
 
 

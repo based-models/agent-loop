@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
@@ -10,7 +10,7 @@ from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ConfigDict
 
 from agentloop.agent import Agent
-from agentloop.errors import ProviderUnavailable, RateLimited, ToolError
+from agentloop.errors import ConfigurationError, ProviderUnavailable, RateLimited, ToolError
 from agentloop.loop import run_conversation
 from agentloop.provider import ModelRequest, ModelResponse, StopReason, Usage
 from agentloop.providers._openai_compat import OpenAICompatClient
@@ -76,7 +76,7 @@ def exporter() -> InMemorySpanExporter:
 
 
 def drive(exporter: InMemorySpanExporter, *responses: ModelResponse,
-          capture: bool = False) -> None:
+          capture: bool = False, redact: Callable[[str], str] | None = None) -> None:
     exporter.clear()
     transcript = Transcript()
     transcript.add_user_message("go")
@@ -85,7 +85,8 @@ def drive(exporter: InMemorySpanExporter, *responses: ModelResponse,
         # agent_name is the APPLICATION's, and this is the seam: a test, the CLI and
         # an eval each pass their own, and the library ships only the default.
         observer=OTelObserver(provider="fake", model="m", agent_name="harness",
-                              capture_content=capture),
+                              capture_content=capture, redact=redact,
+                              allow_unredacted=capture and redact is None),
     )
 
 
@@ -498,3 +499,69 @@ def test_a_successful_call_records_its_attempts_and_request_id(
     drive(exporter, resp(TextPart(text="x")))
     chat = attrs(next(s for s in exporter.get_finished_spans() if s.name == "chat m"))
     assert chat["agentloop.attempts"] == 1
+
+
+# --- capture needs a redactor, like the event trace ---
+
+
+def scrub(text: str) -> str:
+    return text.replace("sk-real-key", "[REDACTED]")
+
+
+def test_capture_without_redact_is_refused() -> None:
+    with pytest.raises(ConfigurationError, match="redact"):
+        OTelObserver(provider="fake", model="m", capture_content=True)
+
+
+def test_captured_text_is_redacted_before_it_is_exported(
+    exporter: InMemorySpanExporter,
+) -> None:
+    drive(exporter, resp(echo_call("API_KEY = 'sk-real-key'"), stop=StopReason.TOOL_USE),
+          resp(TextPart(text="done")), capture=True, redact=scrub)
+    tool = next(s for s in exporter.get_finished_spans() if s.name == "execute_tool echo")
+    assert "sk-real-key" not in str(attrs(tool))
+    assert "[REDACTED]" in str(attrs(tool)["gen_ai.tool.call.arguments"])
+    assert "[REDACTED]" in str(attrs(tool)["gen_ai.tool.call.result"])
+
+
+def test_an_error_detail_is_redacted_then_clipped(exporter: InMemorySpanExporter) -> None:
+    exporter.clear()
+    transcript = Transcript()
+    transcript.add_user_message("go")
+    with pytest.raises(ProviderUnavailable):
+        run_conversation(
+            transcript, DownClient(), REGISTRY, ToyDeps(),
+            observer=OTelObserver(provider="fake", model="m", capture_content=True, redact=scrub),
+        )
+    root = next(s for s in exporter.get_finished_spans() if s.name.startswith("invoke_agent"))
+    assert root.status.description is not None
+    assert "sk-real-key" not in root.status.description
+    [event] = root.events
+    assert event.name == "exception"
+    assert event.attributes is not None
+    assert "sk-real-key" not in str(dict(event.attributes))  # and no stack trace
+
+
+def test_a_redactor_that_raises_drops_the_attribute(exporter: InMemorySpanExporter) -> None:
+    def broken(text: str) -> str:
+        raise RuntimeError("boom")
+
+    drive(exporter, resp(echo_call("API_KEY = 'sk-real-key'"), stop=StopReason.TOOL_USE),
+          resp(TextPart(text="done")), capture=True, redact=broken)
+    tool = next(s for s in exporter.get_finished_spans() if s.name == "execute_tool echo")
+    assert "gen_ai.tool.call.arguments" not in attrs(tool)
+    assert "gen_ai.tool.call.result" not in attrs(tool)
+    assert "sk-real-key" not in str(attrs(tool))
+
+
+# --- a made-up tool name is not exported ---
+
+
+def test_an_unregistered_tool_name_stays_out_of_spans(exporter: InMemorySpanExporter) -> None:
+    drive(exporter,
+          resp(ToolCallPart(id="c1", tool_name="made_up_xyz", arguments={}),
+               stop=StopReason.TOOL_USE),
+          resp(TextPart(text="done")))
+    spans = exporter.get_finished_spans()
+    assert "made_up_xyz" not in str([(s.name, dict(attrs(s))) for s in spans])
+    assert "execute_tool <unregistered>" in [s.name for s in spans]

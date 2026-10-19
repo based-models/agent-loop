@@ -72,14 +72,19 @@ conversation accurately.
 Mutable Pydantic model with public `messages: list[Message]`, defaulting to an empty list.
 
 - `add_user_message(text) -> None`: appends one user `TextPart` message.
-- `add_assistant_message(parts) -> None`: appends an assistant message.
+- `add_assistant_message(parts, origin=None) -> None`: appends an assistant message, keeping
+  the provider's `Origin` for exact replay.
+- `extend_last_assistant(parts, origin=None) -> None`: continues the last assistant message
+  (a turn the provider paused), merging `origin.raw` when both origins match. Raises
+  `TranscriptError` when the last message is not from the assistant.
 - `add_tool_results(results) -> None`: verifies that every pending call is answered exactly
   once, orders results by call order, and appends a user-role result message. Raises
   `TranscriptError` on mismatch.
 - `pending_tool_calls() -> tuple[ToolCallPart, ...]`: calls in the final assistant message,
   or an empty tuple.
 - `check_invariants() -> None`: validates call/result adjacency, completeness, and unique
-  call IDs; raises `TranscriptError` if the transcript is unsafe to send.
+  call IDs, and that hosted-tool parts appear only in assistant messages; raises
+  `TranscriptError` if the transcript is unsafe to send.
 
 ```python
 transcript = Transcript()
@@ -113,5 +118,7 @@ errors. It intentionally does not call `check_invariants()`.
 final_text(transcript) -> str
 ```
 
-Concatenates all text parts in the last assistant message. Returns `""` when there is no
-assistant message or it contains no text.
+Joins the text parts of the last assistant message with `join_text`: a space goes between
+separate blocks ("I'll search." then "The answer is..."), but not across Anthropic's mid-sentence
+citation splits or before closing punctuation. Returns `""` when there is no assistant
+message or it contains no text.

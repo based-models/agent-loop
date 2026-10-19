@@ -34,8 +34,13 @@ run_conversation(
 
 Mutates and returns `transcript`. Each iteration sends a provider-independent
 `ModelRequest`, appends the response, executes requested tools, and appends their results. A
-response truncated mid-tool-call is discarded and retried with a doubled token allowance up
-to the ceiling.
+response truncated mid-tool-call, or truncated before producing anything readable, is discarded
+and retried with a doubled token allowance up to the 64,000 ceiling. A budget is never lowered,
+and when it cannot grow the run raises `LoopBudgetExceeded` with `kind="max_tokens"`.
+
+A provider that pauses a turn (`StopReason.PAUSED`, for example Anthropic's `pause_turn` while
+a hosted tool runs) is continued without sending a user message: the continuation joins the
+same assistant message, and each continuation counts as an iteration.
 
 The deadline is checked between turns. A provider call, its retries, or a started tool batch
 may finish after it. `None` disables the deadline. Exhaustion raises `LoopBudgetExceeded`;

@@ -55,7 +55,7 @@ class ToolError(AgentLoopError):
 
 
 class LoopBudgetExceeded(AgentLoopError):
-    """The agent loop ran out of iterations or wall-clock time.
+    """The agent loop ran out of iterations, wall-clock time or output budget.
 
     `kind`, `limit` and `actual` say which budget and by how much, so a handler
     never parses the message. They are None on an instance built without them.
@@ -65,7 +65,7 @@ class LoopBudgetExceeded(AgentLoopError):
         self,
         message: str,
         *,
-        kind: Literal["iterations", "deadline"] | None = None,
+        kind: Literal["iterations", "deadline", "max_tokens"] | None = None,
         limit: float | None = None,
         actual: float | None = None,
     ) -> None:

@@ -26,7 +26,7 @@ from collections.abc import Callable
 from typing import Any
 
 from agentloop.errors import ConfigurationError, ProviderError
-from agentloop.observer import BudgetKind, NullObserver
+from agentloop.observer import UNREGISTERED_TOOL, BudgetKind, NullObserver
 from agentloop.provider import ModelRequest, ModelResponse
 from agentloop.summary import ConversationContext, ConversationSummary
 from agentloop.transcript import Message, ToolCallPart, ToolResultPart
@@ -73,6 +73,7 @@ class EventTraceObserver(NullObserver):
         self._sent_messages = 0  # request messages already written (capture only)
         self._system_sent = False
         self._tool_started: dict[str, float] = {}
+        self._known_tools: frozenset[str] = frozenset()  # from the last request
 
     # --- plumbing ---
 
@@ -163,9 +164,13 @@ class EventTraceObserver(NullObserver):
             fields["new_messages"] = [self._message(m) for m in fresh]
             if send_system and request.system is not None:
                 fields["system"] = self._text(request.system)
+        with self._lock:
+            self._known_tools = frozenset(tool.name for tool in request.tools)
         self._emit("request", **fields)
 
     def on_response(self, response: ModelResponse) -> None:
+        with self._lock:
+            known = self._known_tools
         usage = response.usage
         fields: dict[str, Any] = {
             "stop_reason": str(response.stop_reason),
@@ -182,7 +187,9 @@ class EventTraceObserver(NullObserver):
             "attempts": response.attempts,
             "retry_wait_seconds": response.retry_wait_seconds or None,
             "tool_calls": [
-                part.tool_name for part in response.content if isinstance(part, ToolCallPart)
+                part.tool_name if part.tool_name in known else UNREGISTERED_TOOL
+                for part in response.content
+                if isinstance(part, ToolCallPart)
             ],
         }
         if self._capture:

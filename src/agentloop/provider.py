@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agentloop.errors import FailurePhase, ProviderError
 from agentloop.transcript import ContentPart, Message, Origin
@@ -142,13 +142,16 @@ class AttemptRecord(BaseModel):
 class ModelResponse(BaseModel):
     """One model turn, normalized.
 
-    `content` must be non-empty: an adapter that would return an empty turn
-    raises ValidationError instead, which it converts to ResponseInvalid.
+    `content` must be non-empty, with one exception: a turn cut off by `max_tokens`
+    before it produced anything readable (a reasoning model that spent the whole
+    budget thinking). That is a truncation the loop can answer with a bigger budget,
+    not an invalid response worth re-sending unchanged. Any other empty turn raises
+    ValidationError, which an adapter converts to ResponseInvalid.
     """
 
     model_config = ConfigDict(frozen=True, protected_namespaces=())
 
-    content: tuple[ContentPart, ...] = Field(min_length=1)
+    content: tuple[ContentPart, ...]
     stop_reason: StopReason
     usage: Usage
     model: str
@@ -164,6 +167,12 @@ class ModelResponse(BaseModel):
     attempt_log: tuple[AttemptRecord, ...] = ()
     # The adapter's own wire form of this turn, for exact replay. See Origin.
     origin: Origin | None = None
+
+    @model_validator(mode="after")
+    def _empty_only_when_truncated(self) -> ModelResponse:
+        if not self.content and self.stop_reason is not StopReason.MAX_TOKENS:
+            raise ValueError("content must not be empty unless the turn hit max_tokens")
+        return self
 
 
 class LLMClient(Protocol):

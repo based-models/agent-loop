@@ -41,6 +41,7 @@ Branch on `summary.status` (a `ConversationStatus`), never on an exception messa
 | `truncated` | The final answer hit `max_tokens` | returned |
 | `iteration_limit` | Out of iterations | `LoopBudgetExceeded` |
 | `deadline_exceeded` | Out of wall-clock time | `LoopBudgetExceeded` |
+| `token_limit` | A turn cannot fit in `max_tokens` and the budget cannot grow | `LoopBudgetExceeded` |
 | `provider_error` | A `ProviderError`, after any retries | raised |
 | `error` | Anything else raised | raised |
 | `cancelled` | `KeyboardInterrupt` and similar | raised |

@@ -39,6 +39,7 @@ CORE_ALLOWED = {
     "collections",      # Counter, abc
     "concurrent",       # ThreadPoolExecutor, in the tool executor
     "contextlib",       # nullcontext / contextmanager, observers and tracing
+    "contextvars",      # a timed-out tool runs in a thread that keeps the caller's context
     "enum",             # StopReason
     "hashlib",          # stall detection compares tool calls by hash, in memory only
     "inspect",          # signature().bind(), tool executor and @tool
