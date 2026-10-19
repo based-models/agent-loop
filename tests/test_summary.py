@@ -802,6 +802,8 @@ def test_a_failed_call_reports_its_real_attempts_and_whether_it_was_sent() -> No
     assert summary.timeline is not None
     assert summary.timeline[0].attempts == 1
     assert summary.timeline[0].attempt_log[0].phase is FailurePhase.TLS
+    # Not answered, so not measured: None, never a free-looking 0.
+    assert (summary.timeline[0].input_tokens, summary.timeline[0].output_tokens) == (None, None)
 
 
 def test_a_retried_failure_is_counted_and_the_turn_shows_every_attempt(

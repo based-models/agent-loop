@@ -56,7 +56,8 @@ These options report conditions but do not stop or otherwise change the conversa
 
 Metadata for one model call: duration, stop reason, token use, cost, attempts, tools, tool
 errors, and whether a truncated call was discarded. When a call fails before returning,
-`error_type` contains the exception class name. `attempt_log` has one `AttemptRecord` per
+`error_type` contains the exception class name, and `input_tokens` / `output_tokens` are
+`None` (not reported), never `0`. `attempt_log` has one `AttemptRecord` per
 attempt (empty when the first attempt succeeded), and `attempts` is the real count even for a
 call that failed.
 

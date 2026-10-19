@@ -129,7 +129,7 @@ These features are off by default. Configure them together with `SummaryOptions`
 - **`timeline`**: `summary.timeline` becomes a tuple of `TurnRecord`s, one per model call:
   duration, stop reason, tokens, cost, attempts, the tools it led to and which of them
   errored, and whether a truncated turn was discarded. A call that raised appears with its
-  `error_type`. The timeline also excludes conversation content.
+  `error_type`, and with `None` tokens: it was never answered, so nothing was measured. The timeline also excludes conversation content.
 
 ## How reporting stays separate from execution
 

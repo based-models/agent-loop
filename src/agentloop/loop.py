@@ -334,8 +334,8 @@ class _Run:
                 model_seconds=model_seconds,
                 stop_reason=str(response.stop_reason) if response is not None else None,
                 error_type=type(error).__name__ if error is not None else None,
-                input_tokens=usage.input_tokens if usage else 0,
-                output_tokens=usage.output_tokens if usage else 0,
+                input_tokens=usage.input_tokens if usage else None,
+                output_tokens=usage.output_tokens if usage else None,
                 cost_usd=usage.cost_usd if usage else None,
                 attempts=(
                     response.attempts

@@ -45,6 +45,9 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
 - A non-JSON body now reports its real status in `ResponseInvalid.status_code` and the message.
 - `OpenAICompatClient` sends its URL and headers per request instead of configuring them on the
   `httpx.Client`; code that replaced the private `_http` attribute still works.
+- `TurnRecord.input_tokens` and `output_tokens` are `int | None`, and `None` (not `0`) for a
+  call that raised before answering: there was no usage to read, and `0` read as "measured,
+  and free". Code that sums the timeline must skip `None`.
 
 ### Fixed
 - `TurnRecord.attempts` reported `1` for a call that failed after retries.

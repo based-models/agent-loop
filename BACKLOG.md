@@ -13,41 +13,15 @@ on day one.
 
 ## Must land before the next release (0.6.0)
 
-Items 1–4 (Anthropic transport classification, the Anthropic `http_client` type and
-ownership, `phase` / `request_sent` on body errors, and the API reference pages) landed on
-`failure-telemetry`. The numbers below are kept so existing references stay valid.
+Nothing open. Items 1–6 landed: 1–4 (Anthropic transport classification, the Anthropic
+`http_client` type and ownership, `phase` / `request_sent` on body errors, the API reference
+pages) in PR 11; 5 (a failed turn's tokens are `None`, not `0`) and 6 (Dependabot PR 10 and
+the `main` merge) after it. The numbers below are kept so existing references stay valid.
 
 Left over from item 2, optional: `pyproject.toml` still allows `anthropic>=1.0`, which
 includes SDKs built on httpx rather than httpx2. `AnthropicClient` reads the expected
 client class from the installed SDK, so either works, but the type hints and docs name
 `httpx2.Client`. Raise the floor to the first httpx2-based SDK once that version is known.
-
-### 5. Decide: failed turns report `0` tokens instead of "not reported" [decide before next release]
-
-**Status:** not implemented. `TurnRecord.input_tokens` / `output_tokens` are plain
-`int = 0` (`summary.py`). `_Run._add_turn` (`loop.py`) fills `0` for a call that raised
-before answering. The project rule is that `None` means "not reported", never zero.
-
-**Concrete trigger:** set `SummaryOptions(timeline=True)` and let one model call fail. The
-failed `TurnRecord` reports 0 input and 0 output tokens. That reads as "measured, and
-free". A consumer summing the timeline can't tell a failed call from a cheap one without
-also checking `error_type`.
-
-**What implementing it takes:**
-- Make both fields `int | None`, set them to `None` when `response is None`, and update
-  anything that sums them.
-- Add a CHANGELOG "Changed" entry.
-
-`TurnRecord` is in `__all__`, so this breaks code doing arithmetic on the fields. **Why it
-is a release decision:** 0.6.0 is already a minor bump that changes `LoopObserver`. Making
-this change in the same release costs nothing extra. Making it later costs another
-breaking release. Either do it now, or record that it waits.
-
-### 6. Release housekeeping for PR 11 [blocks next release]
-
-- Merge Dependabot PR 10 (`actions/upload-artifact` 7.0.2 and `download-artifact` 8.0.2 in
-  `release.yml`; CI green) before tagging. Otherwise the release runs on the older
-  actions.
 
 ---
 

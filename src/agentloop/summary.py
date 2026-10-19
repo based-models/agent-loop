@@ -120,8 +120,9 @@ class TurnRecord(BaseModel):
     # None when the call raised before answering; `error_type` then says why.
     stop_reason: str | None = None
     error_type: str | None = None
-    input_tokens: int = 0
-    output_tokens: int = 0
+    # None, not 0, for a call that raised before answering: there was no usage to read.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     cost_usd: float | None = None
     attempts: int = 1
     # Per-attempt detail; empty when the first attempt succeeded.
