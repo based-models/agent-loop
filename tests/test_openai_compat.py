@@ -478,3 +478,15 @@ def test_an_ordinary_429_is_still_a_retryable_rate_limit() -> None:
     )
     assert error.retryable
 
+
+
+def test_reasoning_models_do_not_send_parallel_tool_calls() -> None:
+    from agentloop.providers.openai import QUIRKS, build_openai_client, quirks_for_model
+
+    assert quirks_for_model("o3-mini").supports_parallel_tool_calls_param is False
+    assert quirks_for_model("gpt-5.1") is QUIRKS
+    client = build_openai_client(api_key="sk-test", model="o4-mini")
+    assert client._quirks.supports_parallel_tool_calls_param is False
+    assert client._quirks.max_tokens_field == "max_completion_tokens"  # provider default kept
+    explicit = build_openai_client(api_key="sk-test", model="o4-mini", quirks=QUIRKS)
+    assert explicit._quirks is QUIRKS

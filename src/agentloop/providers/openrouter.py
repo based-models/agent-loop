@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - type checkers only, never imported at runtime
     import httpx
 
-from agentloop.providers._openai_compat import OpenAICompatClient, Quirks, httpx_timeout
+from agentloop.providers._openai_compat import OpenAICompatClient, Quirks, timeout_with_read
 
 BASE_URL = "https://openrouter.ai/api/v1"
 # The `openrouter/free` router spreads across free models and auto-filters for
@@ -23,6 +23,7 @@ def build_openrouter_client(
     app_url: str | None = None,
     app_name: str | None = None,
     http_client: httpx.Client | None = None,
+    timeout_seconds: float | None = None,
 ) -> OpenAICompatClient:
     headers = {"Authorization": f"Bearer {api_key}"}
     if app_url:
@@ -35,6 +36,7 @@ def build_openrouter_client(
         base_url=BASE_URL,
         headers=headers,
         quirks=Quirks(),
-        timeout=httpx_timeout(**TIMEOUT_SECONDS),
+        timeout=timeout_with_read(TIMEOUT_SECONDS, timeout_seconds),
+        timeout_explicit=timeout_seconds is not None,
         http_client=http_client,
     )

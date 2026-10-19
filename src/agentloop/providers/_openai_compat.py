@@ -97,6 +97,18 @@ def httpx_timeout(**kwargs: float) -> httpx.Timeout:
     return _httpx().Timeout(**kwargs)  # type: ignore[no-any-return]
 
 
+def timeout_with_read(defaults: Mapping[str, float], read_seconds: float | None) -> httpx.Timeout:
+    """`defaults` as an `httpx.Timeout`, with the read timeout replaced when one is given.
+
+    Read is the one that matters for a model: the gap between bytes of a response that
+    is still being generated. Connect, write and pool keep the provider's own values.
+    """
+    values = dict(defaults)
+    if read_seconds is not None:
+        values["read"] = read_seconds
+    return httpx_timeout(**values)
+
+
 class Quirks(BaseModel):
     """Behavioural differences between OpenAI-compatible servers.
 
@@ -558,12 +570,14 @@ class OpenAICompatClient:
         timeout: httpx.Timeout,
         api: Api = "completions",
         http_client: httpx.Client | None = None,
+        timeout_explicit: bool = False,
     ) -> None:
         """`http_client` is the escape hatch for trust, proxy and transport: build an
         `httpx.Client` with the `verify`, `proxy` or `transport` you need and pass it in.
         It stays yours to close. The URL and auth headers are sent per request, so the
         client needs no `base_url` or default headers; `timeout` is applied per request
-        too, unless the client was given a timeout of its own.
+        too, unless the client was given a timeout of its own -- or `timeout_explicit` says
+        the caller asked for this `timeout`, which then wins over the client's.
         """
         self.name = name
         self.model = model
@@ -588,7 +602,7 @@ class OpenAICompatClient:
             self._http = http_client
             # httpx's own default means "the caller did not choose one".
             chose_own = http_client.timeout != self._httpx.Timeout(5.0)
-            self._timeout = None if chose_own else timeout
+            self._timeout = None if chose_own and not timeout_explicit else timeout
 
     @property
     def api(self) -> Api:

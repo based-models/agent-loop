@@ -33,6 +33,7 @@ A frozen Pydantic model containing the model-visible definition and handler.
 | `description` | non-empty `str` | Model-visible instructions |
 | `parameters` | `dict[str, Any]` | Bare handwritten JSON Schema |
 | `handler` | `Handler` | Callable whose first argument is the deps bundle |
+| `parallel_safe` | `bool` | `True`. Set `False` for a handler that is not thread-safe: a turn that calls it runs all of its tool calls one after another, in call order |
 | `timeout_seconds` | `float \| None` | Per-call limit; `None` waits forever. On expiry the model gets an error result and the handler thread is abandoned (Python cannot kill it), so the handler should still set its own network timeouts |
 
 ```python

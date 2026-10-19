@@ -22,6 +22,7 @@ finally:
 |---|---|---|
 | `LLM_PROVIDER` | `anthropic` | `anthropic`, `openai`, `openrouter`, or `modal` |
 | `LLM_MAX_ATTEMPTS` | `3` | Total attempts, including the first request |
+| `LLM_TIMEOUT_SECONDS` | provider default | Read timeout for one model call (Anthropic: the SDK's overall timeout) |
 | `ANTHROPIC_API_KEY` | unset | Anthropic credential |
 | `ANTHROPIC_MODEL` | `claude-opus-5` | Anthropic model |
 | `OPENAI_API_KEY` | unset | OpenAI credential |

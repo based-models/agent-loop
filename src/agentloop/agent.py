@@ -75,6 +75,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     timeout_seconds: float | None = None,
+    parallel_safe: bool = True,
 ) -> Callable[[Callable[..., Any]], ToolSpec]:
     """Turn a plain function into a ToolSpec.
 
@@ -88,6 +89,7 @@ def tool(
 
     `timeout_seconds` bounds one call: past it the model is told the tool timed out and
     the loop moves on. The handler's thread is abandoned, not killed (see `ToolSpec`).
+    `parallel_safe=False` makes any turn that calls this tool run its calls sequentially.
     """
 
     def decorate(fn: Callable[..., Any]) -> ToolSpec:
@@ -104,6 +106,7 @@ def tool(
             parameters=parameters,
             handler=_make_handler(fn),
             timeout_seconds=timeout_seconds,
+            parallel_safe=parallel_safe,
         )
 
     return decorate

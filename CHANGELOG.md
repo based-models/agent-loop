@@ -42,7 +42,23 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
 - `OTelObserver(redact=..., allow_unredacted=...)`, with the event trace's rules.
 - `ConversationStatus.TOKEN_LIMIT` and `LoopBudgetExceeded(kind="max_tokens")`.
 
+- `ToolSpec.parallel_safe` (and `@tool(parallel_safe=...)`): `False` makes a turn that calls
+  the tool run all its calls sequentially, in call order.
+- `Settings.timeout_seconds` / `LLM_TIMEOUT_SECONDS`, and `timeout_seconds=` on
+  `build_openai_client`, `build_openrouter_client` and `build_modal_client`: replaces the read
+  timeout of the OpenAI-compatible providers (Anthropic: the SDK's overall timeout). An explicit
+  timeout now wins over a supplied `http_client`'s, so the "is it 5 seconds?" guess only applies
+  when none was asked for.
+- `build_openai_client(quirks=...)` and `providers.openai.MODEL_QUIRKS` / `quirks_for_model`: the
+  o-series reasoning models no longer receive `parallel_tool_calls`, which they reject.
+
 ### Changed
+- Resuming a transcript that ends in unanswered tool calls (the process died while tools ran)
+  runs those calls before the first model call instead of sending an invalid request. Any other
+  invalid transcript raises `TranscriptError` before a model call, not a provider 400.
+- `configure_tracing()` logs a warning when a provider is already installed (it cannot replace
+  it, so the one it returns receives no spans), and a traced conversation logs one warning when
+  no provider is installed at all.
 - `OTelObserver(capture_content=True)` now needs `redact` or `allow_unredacted=True`, else it
   raises `ConfigurationError`. Captured text is redacted, then clipped; a redactor that raises
   drops the attribute. Exceptions are recorded as an `exception` event with a redacted message

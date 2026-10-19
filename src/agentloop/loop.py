@@ -361,9 +361,27 @@ class _Run:
             )
         )
 
+    def _resume_pending_calls(self) -> None:
+        """Answer tool calls a loaded transcript left unanswered, before any model call.
+
+        `from_jsonl` deliberately loads a log cut off mid-turn (the process died while
+        tools ran). Sending that as it stands is a 400 on every provider, which is not
+        retried. Running the calls is the natural resume; anything else wrong with the
+        transcript is raised here, with the fix, rather than as an opaque provider error.
+        """
+        pending = self.transcript.pending_tool_calls()
+        if pending:
+            logger.warning("resuming: running %d tool call(s) left unanswered", len(pending))
+            started = time.monotonic()
+            results = run_tools(pending, self.registry, self.deps, self.watcher)
+            self.tool_seconds += time.monotonic() - started
+            self.transcript.add_tool_results(results)
+        self.transcript.check_invariants()
+
     def drive(self) -> ConversationStatus:
         """Loop until the model stops asking for tools; raise if it will not."""
         transcript, watcher = self.transcript, self.watcher
+        self._resume_pending_calls()
 
         for _ in range(self.max_iterations):
             elapsed = time.monotonic() - self.started

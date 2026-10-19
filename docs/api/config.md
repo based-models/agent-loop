@@ -25,6 +25,7 @@ A frozen Pydantic model. Unknown fields are rejected.
 | `openai_model` | `str` | `"gpt-5.1"` |
 | `openai_api` | `"responses" | "completions"` | `"responses"` |
 | `max_attempts` | `int >= 1` | `3` |
+| `timeout_seconds` | `float > 0 \| None` | `None` (provider default) |
 
 ### `Settings.model`
 
