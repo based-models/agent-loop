@@ -285,7 +285,7 @@ and the rest of the package.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LLM_PROVIDER` | `anthropic` | `anthropic`, `openai`, `openrouter`, or `modal` |
+| `LLM_PROVIDER` | `openrouter` | `anthropic`, `openai`, `openrouter`, or `modal` |
 | `LLM_MAX_ATTEMPTS` | `3` | Total attempts, including the first request |
 | `LLM_TIMEOUT_SECONDS` | provider default | Read timeout for one model call (Anthropic: the SDK's overall timeout) |
 | `ANTHROPIC_API_KEY` | unset | Anthropic credential |

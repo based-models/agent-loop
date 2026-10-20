@@ -40,7 +40,7 @@ class Settings(BaseModel):
         protected_namespaces=(),  # several fields are legitimately named *_model
     )
 
-    provider: Provider = "anthropic"
+    provider: Provider = "openrouter"
 
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-opus-5"
@@ -109,7 +109,7 @@ class Settings(BaseModel):
         program understands, in one greppable place.
         """
         return cls(
-            provider=env.get("LLM_PROVIDER", "anthropic"),          # type: ignore[arg-type]
+            provider=env.get("LLM_PROVIDER", "openrouter"),         # type: ignore[arg-type]
             anthropic_api_key=env.get("ANTHROPIC_API_KEY"),         # type: ignore[arg-type]
             anthropic_model=env.get("ANTHROPIC_MODEL", "claude-opus-5"),
             openrouter_api_key=env.get("OPENROUTER_API_KEY"),       # type: ignore[arg-type]

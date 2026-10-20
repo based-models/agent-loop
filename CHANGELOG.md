@@ -53,6 +53,10 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
   o-series reasoning models no longer receive `parallel_tool_calls`, which they reject.
 
 ### Changed
+- **Breaking:** the default provider is now `openrouter`, not `anthropic`, for `Settings.provider`
+  and `Settings.from_env` when `LLM_PROVIDER` is unset. Set `LLM_PROVIDER=anthropic` (or
+  `Settings(provider="anthropic")`) to keep the old behavior; otherwise the missing
+  `OPENROUTER_API_KEY` raises `AuthError`.
 - Resuming a transcript that ends in unanswered tool calls (the process died while tools ran)
   runs those calls before the first model call instead of sending an invalid request. Any other
   invalid transcript raises `TranscriptError` before a model call, not a provider 400.

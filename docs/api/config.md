@@ -12,7 +12,7 @@ A frozen Pydantic model. Unknown fields are rejected.
 
 | Field | Type | Default |
 |---|---|---|
-| `provider` | `Provider` | `"anthropic"` |
+| `provider` | `Provider` | `"openrouter"` |
 | `anthropic_api_key` | `SecretStr | None` | `None` |
 | `anthropic_model` | `str` | `"claude-opus-5"` |
 | `openrouter_api_key` | `SecretStr | None` | `None` |
