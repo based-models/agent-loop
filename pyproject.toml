@@ -37,6 +37,7 @@ dev           = [
 
 [project.urls]
 Repository = "https://github.com/based-models/agent-loop"
+Documentation = "https://www.basedmodels.com/docs/agent-loop"
 Changelog = "https://github.com/based-models/agent-loop/blob/main/CHANGELOG.md"
 
 # No [project.scripts]: agentloop is a library and has no command.
