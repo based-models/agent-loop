@@ -5,6 +5,13 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
 
 ## [Unreleased]
 
+## [0.6.1]
+
+### Changed
+- README: the Documentation section links to the published docs and no longer hard-codes which
+  agentloop versions agentloop-tools supports (the PyPI page freezes the README at release time).
+  No code changes.
+
 ## [0.6.0]
 
 ### Added
