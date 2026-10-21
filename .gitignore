@@ -32,3 +32,9 @@ venv/
 
 # personal editor settings (the interpreter choice is per-developer)
 .vscode/
+
+# Internal notes and personal tooling: kept locally, not published
+.claude/
+CLAUDE.md
+BACKLOG.md
+DOCUMENTATION.md
