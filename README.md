@@ -347,7 +347,15 @@ or another application-owned source.
 
 ## Documentation
 
-Full documentation coming soon
+Read the [documentation](https://www.basedmodels.com/docs/agent-loop):
+[installation](https://www.basedmodels.com/docs/agent-loop/getting-started/installation),
+[Hello World](https://www.basedmodels.com/docs/agent-loop/getting-started/hello-world),
+[providers](https://www.basedmodels.com/docs/agent-loop/guides/providers),
+[observers](https://www.basedmodels.com/docs/agent-loop/guides/observers), and the
+[API reference](https://www.basedmodels.com/docs/agent-loop/api). Typed helpers for hosted
+web search live in the companion
+[agentloop-tools](https://www.basedmodels.com/docs/agent-tools) package, whose 0.1.x
+releases work with agentloop 0.4 and 0.5.
 
 ## Stability and license
 
