@@ -1,6 +1,9 @@
 # `agentloop.transcript`
 
-Provider-independent conversation history.
+Provider-independent conversation history. A `Transcript` is an ordered list of user and
+assistant `Message` objects. Each message contains one or more content parts, such as text,
+a local tool call, or its result. Provider adapters convert their wire formats to these
+types so the loop can use one transcript shape across providers.
 
 ## Type aliases
 
@@ -18,11 +21,7 @@ Base model carrying the shared immutable/strict configuration. It has no data fi
 
 ### `TextPart`
 
-Fields: `type="text"`, required `text: str`, and optional `citations`.
-
-```python
-part = TextPart(text="Hello")
-```
+Fields: `type="text"`, required `text: str`, and `citations: tuple[Citation, ...] = ()`.
 
 ### `ToolCallPart`
 
@@ -45,21 +44,32 @@ required `content: str`, and `is_error: bool = False`.
 
 ### `ThinkingPart`
 
-Fields: `type="thinking"`, required `text`, and optional `signature`, `provider`, `model`,
-and `raw`. `raw` preserves a vendor block for byte-faithful replay. Reasoning text may be
-empty even when a signed block is present.
+Fields: `type="thinking"`, required `text: str`, and optional `signature: str`,
+`provider: str`, `model: str`, and `raw`. `raw` preserves a provider block for exact replay.
+Reasoning text may be empty even when a signed block is present.
 
 ### `HostedToolPart`
 
-Describes a provider-run tool call. Fields include `kind`, optional `call_id`, optional
-`query`, `sources`, and optional `error`. The loop records this part for inspection but does
-not execute it as a local Python tool.
+Describes a provider-run tool call. Fields are `type="hosted_tool"`, required non-empty
+`kind: str`, optional `call_id: str`, `query: str`, and `error: str`, and
+`sources: tuple[Source, ...] = ()`. The loop records this part for inspection but does not
+execute it as a local Python tool.
 
 ### `Source` and `Citation`
 
-`Source` records the URL and optional title of a page consulted by a provider-hosted tool.
-`Citation` connects assistant text to a URL and may include a title, quoted text, or text
-offsets when the provider reports them.
+`Source` has a required `url: str` and optional `title: str`. It records a page consulted by
+a provider-hosted tool. `Citation` has a required `url: str` and optional `title: str`,
+`cited_text: str`, `start: int`, and `end: int`. It connects assistant text to a URL and
+records quoted text or text offsets when the provider reports them.
+
+## `Origin`
+
+Provider-specific information attached to an assistant message. Its fields are
+`provider: str`, `api: str`, `model: str`, and `raw: tuple[dict[str, Any], ...]`. An adapter
+for the same provider and API can replay `raw` to continue the conversation faithfully.
+Other adapters rebuild the message from its provider-independent content parts.
+`matches(provider, api) -> bool` reports whether an adapter can use this origin; it returns
+`False` when `provider` is `None`.
 
 ## `Message`
 
@@ -82,16 +92,9 @@ Mutable Pydantic model with public `messages: list[Message]`, defaulting to an e
   `TranscriptError` on mismatch.
 - `pending_tool_calls() -> tuple[ToolCallPart, ...]`: calls in the final assistant message,
   or an empty tuple.
-- `check_invariants() -> None`: validates call/result adjacency, completeness, and unique
-  call IDs, and that hosted-tool parts appear only in assistant messages; raises
-  `TranscriptError` if the transcript is unsafe to send.
-
-```python
-transcript = Transcript()
-transcript.add_user_message("hello")
-assert transcript.pending_tool_calls() == ()
-transcript.check_invariants()
-```
+- `check_invariants() -> None`: validates call/result adjacency, completeness, unique call
+  IDs within each message, and that hosted-tool parts appear only in assistant messages.
+  It raises `TranscriptError` if the transcript is unsafe to send.
 
 ## Serialization and extraction
 
@@ -101,7 +104,8 @@ transcript.check_invariants()
 to_jsonl(messages) -> str
 ```
 
-Returns one JSON-serialized message per line with a trailing newline. It performs no I/O.
+Returns one JSON-serialized message per line with a trailing newline when there are
+messages. It performs no I/O; an empty input returns an empty string.
 
 ### `from_jsonl`
 
@@ -112,13 +116,50 @@ from_jsonl(lines) -> Transcript
 Parses any iterable of lines, skipping blanks. Invalid JSON or models raise validation
 errors. It intentionally does not call `check_invariants()`.
 
+### `join_text`
+
+```text
+join_text(parts) -> str
+```
+
+Joins text parts from one message. It adds a space between separate blocks when needed,
+while preserving mid-sentence citation splits and punctuation.
+
 ### `final_text`
 
 ```text
 final_text(transcript) -> str
 ```
 
-Joins the text parts of the last assistant message with `join_text`: a space goes between
-separate blocks ("I'll search." then "The answer is..."), but not across Anthropic's mid-sentence
-citation splits or before closing punctuation. Returns `""` when there is no assistant
+Uses `join_text` on the last assistant message. Returns `""` when there is no assistant
 message or it contains no text.
+
+Create a transcript, serialize it, and restore it:
+
+```python
+from agentloop import Transcript, final_text
+from agentloop.transcript import TextPart, from_jsonl, to_jsonl
+
+transcript = Transcript()
+transcript.add_user_message("Hello")
+transcript.add_assistant_message((TextPart(text="Hi!"),))
+transcript.check_invariants()
+
+jsonl = to_jsonl(transcript.messages)
+restored = from_jsonl(jsonl.splitlines())
+restored.check_invariants()
+print(final_text(restored))
+print(len(restored.messages))
+print(jsonl.count("\n"))
+```
+
+Output:
+
+```text
+Hi!
+2
+2
+```
+
+The two JSONL lines represent the user and assistant messages. `from_jsonl()` recreates
+both; `final_text()` reads the assistant reply.

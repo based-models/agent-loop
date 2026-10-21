@@ -1,32 +1,51 @@
 # Tool-enabled agent
 
+`agentloop` supports Anthropic, OpenAI, OpenRouter, and Modal/vLLM. This example uses OpenAI.
+
+Install OpenAI support and set the provider credentials:
+
+```bash
+python -m pip install 'based-models-agentloop[openai-compat]'
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY='your-key'
+```
+
+Give the agent a local function it can call:
+
 ```python
 import os
 
-from agentloop import Agent, ConsoleObserver, tool
+from agentloop import Agent, tool
 
-WEATHER_SCHEMA = {
+@tool(parameters={
     "type": "object",
-    "properties": {
-        "city": {"type": "string", "description": "City name"},
-    },
-    "required": ["city"],
+    "properties": {"word": {"type": "string"}},
+    "required": ["word"],
     "additionalProperties": False,
-}
-
-@tool(parameters=WEATHER_SCHEMA)
-def weather(city: str) -> str:
-    """Return example weather for a city."""
-    return f"The example forecast for {city} is sunny."
+})
+def count_letters(word: str) -> str:
+    """Count the letters in a word."""
+    return str(len(word))
 
 with Agent.from_env(
     os.environ,
-    tools=[weather],
-    observer=ConsoleObserver(),
-    system="Use the weather tool for forecasts.",
+    tools=[count_letters],
+    system="Use count_letters to count letters before answering.",
 ) as agent:
-    agent.run("What is the weather in Lisbon?")
+    result = agent.run_result(
+        "How many letters are in agent? Use count_letters. Reply with just the number."
+    )
+    print(result.text)
+    print(result.summary.tool_calls)
 ```
 
-`ConsoleObserver` prints the tool call, result, and final response, so the return value from
-`run()` is intentionally not printed again.
+Output:
+
+```text
+5
+{'count_letters': 1}
+```
+
+The schema tells the model what argument to pass. When it calls `count_letters`, the agent
+executes the Python function and sends its result back to the model. `run_result()` returns
+the final answer and a summary; `tool_calls` confirms that the tool ran once.

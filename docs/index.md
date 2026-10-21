@@ -1,14 +1,16 @@
 # agentloop documentation
 
-`agentloop` is a synchronous agent loop that works with several model providers. It supplies
-shared conversation types, tool execution, retries, limits, and operational reporting while
-leaving application policy in your code.
+`agentloop` is a synchronous Python agent loop for Anthropic, OpenAI, OpenRouter, Modal/vLLM,
+and custom clients. It supplies shared conversation types, tool execution, retries, limits,
+and operational reporting. Your application chooses prompts, tools, approvals, and secrets.
 
 ## Start here
 
-- [Install agentloop](getting-started/installation.md)
-- [Run Hello World with any provider](getting-started/hello-world.md)
-- [Configure providers](getting-started/configuration.md)
+1. [Install agentloop](getting-started/installation.md).
+2. [Run Hello World](getting-started/hello-world.md) with the included `FakeClient` to see
+   the loop work offline, then use the same `Agent.run()` call with a live provider.
+3. [Configure a provider](getting-started/configuration.md) with an explicit mapping or
+   `Settings` object.
 
 ## Guides
 
@@ -23,7 +25,6 @@ leaving application policy in your code.
 - [Observers](guides/observers.md)
 - [OpenTelemetry tracing and metrics](guides/tracing.md)
 - [Installing](guides/installing.md)
-- [Releasing](guides/releasing.md)
 - [Retries and errors](guides/retries-and-errors.md)
 - [Store transcripts](guides/transcript-storage.md)
 
@@ -32,5 +33,5 @@ leaving application policy in your code.
 - [API reference](api/index.md)
 - [Example index](examples/index.md)
 
-The API reference covers supported names that do not begin with `_`. Names beginning with
-`_` are internal and can change without notice.
+The API reference describes the main public interfaces. Names beginning with `_` are
+internal and can change without notice.

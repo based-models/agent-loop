@@ -1,13 +1,14 @@
 # `agentloop.providers.openrouter`
 
-OpenRouter integration using the shared OpenAI-compatible HTTP client. Requires
-`based-models-agentloop[openai-compat]`.
+OpenRouter integration using the shared OpenAI-compatible HTTP client. Install
+`based-models-agentloop[openai-compat]` and set `OPENROUTER_API_KEY`. For automatic
+provider selection and retries, see the [providers guide](../../guides/providers.md).
 
 ## Constants
 
 - `BASE_URL = "https://openrouter.ai/api/v1"`
 - `DEFAULT_MODEL = "openrouter/free"`
-- `TIMEOUT_SECONDS`: connect/read/write/pool timeout mapping.
+- `TIMEOUT_SECONDS`: connect 10, read 300, write 30, and pool 10 seconds.
 
 ## `build_openrouter_client`
 
@@ -19,25 +20,47 @@ build_openrouter_client(
     app_url=None,
     app_name=None,
     http_client=None,
+    timeout_seconds=None,
 ) -> OpenAICompatClient
 ```
 
-Constructs an `LLMClient` named `openrouter`. `app_url` and `app_name` set OpenRouter's
-optional attribution headers. `http_client` is an `httpx.Client` carrying your trust store,
-proxy or transport; it stays yours to close, and anything else raises `ConfigurationError`.
+The builder returns a direct `LLMClient` named `openrouter`. `app_url` sets the optional
+`HTTP-Referer` attribution header, and `app_name` sets `X-Title`. `timeout_seconds`
+overrides the 300-second read timeout while retaining the other timeout defaults.
+
+OpenRouter uses Chat Completions (`api="completions"`) and has no hosted tools
+(`hosted_tools` is empty). For reasoning models, it replays `reasoning_details` from an
+assistant message's `Origin` when the message came from OpenRouter. This preserves the
+provider's reasoning state across turns. The client exposes `name`, `model`, `api`,
+`hosted_tools`, `complete(request)`, `close()`, and context manager methods.
+
+This example sends one request and reads the normalized response text:
 
 ```python
-client = build_openrouter_client(
-    api_key="secret",
-    app_url="https://example.com",
-    app_name="Example",
-)
+import os
+
+from agentloop import Transcript, join_text
+from agentloop.provider import ModelRequest
+from agentloop.providers.openrouter import build_openrouter_client
+
+transcript = Transcript()
+transcript.add_user_message("Reply with exactly: ready")
+request = ModelRequest(messages=tuple(transcript.messages), max_tokens=100)
+
+with build_openrouter_client(api_key=os.environ["OPENROUTER_API_KEY"]) as client:
+    response = client.complete(request)
+    print(client.name, client.api)
+    print(join_text(response.content))
 ```
 
-It speaks Chat Completions (`api="completions"`) and has no hosted tools
-(`hosted_tools` is empty). For reasoning models it replays `reasoning_details` from the
-message's `Origin`, unchanged and in order.
+Output:
 
-The returned client exposes `name`, `model`, `complete(request)`, `close()`, and context
-manager methods. Add `RetryingClient` explicitly or construct through `build_client` for
-automatic retries.
+```text
+openrouter completions
+ready
+```
+
+Pass an `httpx.Client` as `http_client` to configure a trust store, proxy, or transport.
+The client remains yours to close, and `close()` leaves it open. Passing another HTTP
+client type raises `ConfigurationError`. The builder does not add retries; use
+`build_client()` or `RetryingClient` if you need them.

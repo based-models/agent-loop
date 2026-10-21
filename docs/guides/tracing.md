@@ -1,47 +1,64 @@
 # OpenTelemetry tracing and metrics
 
-Install the tracing extra, configure an exporter, and enable tracing on the agent:
+`agentloop` supports Anthropic, OpenAI, OpenRouter, and Modal/vLLM. This example uses OpenAI.
+
+Install OpenAI support and the OpenTelemetry extra:
 
 ```bash
-pip install 'based-models-agentloop[otel]'
+python -m pip install 'based-models-agentloop[openai-compat,otel]'
 ```
+
+`trace=True` adds an `OTelObserver` to the agent. Install a tracer provider before running
+it. This example uses an in-memory exporter so you can inspect the spans without a collector.
+Configure OpenAI as in [Hello World](../getting-started/hello-world.md):
 
 ```python
 import os
 
-from agentloop import Agent
-from agentloop.tracing import configure_tracing
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-provider = configure_tracing(
-    "http://localhost:4318",
-    service_name="hello-agent",
-)
+from agentloop import Agent
+
+exporter = InMemorySpanExporter()
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(exporter))
+trace.set_tracer_provider(provider)
+
 try:
-    with Agent.from_env(
-        os.environ,
-        tools=[],
-        name="hello-agent",
-        trace=True,
-    ) as agent:
-        print(agent.run("Hello"))
-    provider.force_flush()
+    with Agent.from_env(os.environ, tools=[], name="demo", trace=True) as agent:
+        print("answer:", agent.run("Reply with exactly ready."))
+    spans = exporter.get_finished_spans()
+    print("span operations:", [s.attributes["gen_ai.operation.name"] for s in spans])
 finally:
     provider.shutdown()
+```
+
+Output:
+
+```text
+answer: ready
+span operations: ['chat', 'invoke_agent']
 ```
 
 Tracing creates one top-level span for the conversation, one child span for each model
 request, and one span for each local tool call. A span is one timed operation in an
 OpenTelemetry trace. Retries appear as events on the related model-request span.
 
-Tracing needs a provider installed first. A traced conversation with none logs one warning
-and discards its spans; calling `configure_tracing()` a second time logs a warning too, because
-OpenTelemetry keeps the first provider and the returned one receives nothing.
+For an OTLP collector, `configure_tracing(endpoint, service_name=...)` installs a provider
+that exports spans to the endpoint's `/v1/traces` path. Call it once per process, then flush
+and shut down the returned provider when your application exits. A traced conversation with
+no provider logs one warning and discards its spans. Calling `configure_tracing()` after a
+provider is already installed logs a warning because OpenTelemetry keeps the first one.
 
 Prompts, tool arguments, tool results, and provider error messages are not captured by
-default. Construct an
-`OTelObserver(..., capture_content=True, redact=scrub)` (a redactor is required, as for the event
-trace) only when your data-handling policy permits that
-content to leave the process. One `OTelObserver` can trace only one conversation at a time.
+default. To capture them, construct an `OTelObserver(..., capture_content=True,
+redact=scrub)`. A redactor is a function that replaces sensitive text before it is exported;
+see [capturing content in the event trace guide](event-trace.md#capturing-content) for a
+simple example. A redactor is required unless you explicitly pass
+`allow_unredacted=True`. One `OTelObserver` can trace only one conversation at a time.
 
 The conversation span records its status, identifiers, iterations, limits, timing, retries,
 usage, and stall flag. A failed call also gets `error.type`, `agentloop.error.phase` and `agentloop.error.request_sent`
@@ -51,32 +68,44 @@ same whether content capture is on or off.
 
 ## Metrics
 
-For dashboards and alerts, `agentloop.metrics.MetricsObserver`—or the shorter
-`Agent(metrics=True)` option—records counters and distributions through the OpenTelemetry
-metrics API. Like tracing, it records nothing until your application configures an
+For dashboards and alerts, `agentloop.metrics.MetricsObserver` records counters and
+distributions through the OpenTelemetry metrics API. `Agent(metrics=True)` provides a shorter
+way to enable it. Like tracing, it records nothing until your application configures an
 OpenTelemetry `MeterProvider`.
 
 ```python
 import os
 
 from opentelemetry import metrics
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from agentloop import Agent
 
-exporter = OTLPMetricExporter(endpoint="http://localhost:4318/v1/metrics")
-reader = PeriodicExportingMetricReader(exporter)
+reader = InMemoryMetricReader()
 meter_provider = MeterProvider(metric_readers=[reader])
 metrics.set_meter_provider(meter_provider)
 
 try:
     with Agent.from_env(os.environ, tools=[], metrics=True) as agent:
-        agent.run("Hello")
-    meter_provider.force_flush()
+        print("answer:", agent.run("Reply with exactly ready."))
+    data = reader.get_metrics_data()
+    names = sorted({
+        metric.name
+        for resource in data.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+    })
+    print("metric names:", names)
 finally:
     meter_provider.shutdown()
+```
+
+Output:
+
+```text
+answer: ready
+metric names: ['agentloop.conversation.duration', 'agentloop.conversation.iterations', 'agentloop.conversation.model_duration', 'agentloop.conversations', 'agentloop.tokens']
 ```
 
 | Instrument | Kind | Attributes |

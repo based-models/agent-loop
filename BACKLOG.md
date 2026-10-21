@@ -43,6 +43,12 @@ Left over:
 - **Hosted-tools guide examples (item 12).** The `agentloop-tools` parts of
   `docs/guides/hosted-tools.md` (`native_web_search`, `DomainPolicy`) were written from this
   backlog and not run here.
+- **Companion package version compatibility.** `based-models-agentloop-tools` 0.1.0 pins
+  `based-models-agentloop>=0.4,<0.5`, while this checkout is 0.5.0. Update the companion
+  package's dependency range after verifying it against 0.5.0 so both can be installed
+  together by pip.
+- **Public documentation hosting.** Add the `docs/` content to the website, then replace
+  the PyPI README's documentation placeholder with a link to the published pages.
 
 ---
 

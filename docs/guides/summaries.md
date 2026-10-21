@@ -6,29 +6,34 @@ contain messages, tool arguments, tool results, or exception text. This metadata
 is suitable for operational logs, metrics, and checkpoints, subject to your organization's
 rules for identifiers and tool names.
 
+Start with `Agent.run_result()`. It returns a `ConversationResult` whose `.summary` is the
+`ConversationSummary`. With OpenAI configured as in
+[Hello World](../getting-started/hello-world.md):
+
 ```python
-result = agent.run_result("summarize the open support case", correlation_id="case-42")
+import os
+
+from agentloop import Agent
+
+with Agent.from_env(os.environ, tools=[]) as agent:
+    result = agent.run_result("Reply with exactly ready.", correlation_id="example-1")
+
 print(result.text)
-print(result.summary.model_dump_json())
+print(result.summary.model_dump_json(include={
+    "correlation_id", "provider", "model", "status", "iterations",
+    "tool_calls", "provider_retries", "usage",
+}))
 ```
 
-```json
-{
-  "conversation_id": "9f1c...",
-  "correlation_id": "case-42",
-  "agent_name": "support-case-review",
-  "provider": "openrouter",
-  "model": "gpt-5.1",
-  "status": "iteration_limit",
-  "iterations": 30,
-  "iteration_limit": 30,
-  "elapsed_seconds": 412.8,
-  "tool_calls": {"search_knowledge_base": 4, "fetch_article": 8},
-  "tool_errors": {"fetch_article": 2},
-  "provider_retries": 1,
-  "usage": {"input_tokens": 12000, "output_tokens": 3500, "cost_usd": 0.08}
-}
+Output:
+
+```text
+ready
+{"correlation_id":"example-1","provider":"openai","model":"gpt-5.1-2025-11-13","status":"completed","iterations":1,"tool_calls":{},"provider_retries":0,"usage":{"input_tokens":11,"output_tokens":11,"cache_read_tokens":0,"cache_write_tokens":null,"reasoning_tokens":0,"cost_usd":null,"input_includes_cached":true}}
 ```
+
+`model_dump_json(include=...)` selects fields for display. The full summary also includes
+the generated `conversation_id`, elapsed time, limits, and other counters.
 
 ## Status
 
@@ -46,7 +51,10 @@ Branch on `summary.status` (a `ConversationStatus`), never on an exception messa
 | `error` | Anything else raised | raised |
 | `cancelled` | `KeyboardInterrupt` and similar | raised |
 
-`status.succeeded` and `status.budget_exhausted` cover the common branches.
+`succeeded` and `budget_exhausted` are Boolean properties of `ConversationStatus`, not
+additional statuses. `status.succeeded` is true for `completed`, `refused`, and `truncated`;
+`status.budget_exhausted` is true for `iteration_limit`, `deadline_exceeded`, and
+`token_limit`. Both are false for the other statuses.
 `LoopBudgetExceeded` also has structured `.kind`, `.limit` and `.actual`.
 
 ## Get the summary
@@ -61,11 +69,41 @@ Branch on `summary.status` (a `ConversationStatus`), never on an exception messa
    conversation, on success and failure. If the callback raises, the library logs that
    callback failure without hiding the conversation's result or error.
 
+An observer receives a summary even when a run raises. `NullObserver` supplies no-op methods,
+so a subclass can implement only the callback it needs. This `SummaryObserver` keeps the
+latest summary:
+
 ```python
-class JsonlSink(NullObserver):
+import os
+
+from agentloop import Agent, ConversationSummary, NullObserver
+
+
+class SummaryObserver(NullObserver):
+    def __init__(self) -> None:
+        self.latest: ConversationSummary | None = None
+
     def on_conversation_end(self, summary: ConversationSummary) -> None:
-        log.info(summary.model_dump_json())
+        self.latest = summary
+
+
+observer = SummaryObserver()
+with Agent.from_env(os.environ, tools=[], observer=observer) as agent:
+    result = agent.run_result("Reply with exactly ready.")
+
+print("observer received summary:", observer.latest == result.summary)
+print("status:", result.summary.status)
 ```
+
+Output:
+
+```text
+observer received summary: True
+status: completed
+```
+
+The callback runs before `run_result()` returns. You can log
+`summary.model_dump_json()` there to record every run, including failures.
 
 ## Grouping conversations
 
@@ -80,8 +118,8 @@ unless you supply one. Your application decides how to group, store, and aggrega
   truncated turn and each paused continuation.
 - `None` means unknown, never zero. `usage.cost_usd` is `None` unless a provider turn
   reported a cost; if only some turns did, it is the sum of those.
-- `request_sent` and `error_request_sent` keep three states. `None` means the adapter could
-  not tell, which is not the same as `False`.
+- `error_request_sent` and each `failed_attempts` entry's `request_sent` keep three states.
+  `None` means the adapter could not tell, which is not the same as `False`.
 - `provider_retries` counts attempts after the first, including attempts for a request that
   ultimately failed. It works with any `RetryingClient` and requires no observer setup.
 
@@ -106,17 +144,33 @@ provider reported no cache tokens. It accounts for providers that count cached t
 
 ## Optional detail and warnings
 
+`SummaryOptions` enables extra reporting. Pass it to `Agent` when you want a timeline, stall
+detection, or budget warnings:
+
 ```python
+import os
+
 from agentloop import Agent, SummaryOptions
 
-agent = Agent(
-    tools,
-    client=client,
+with Agent.from_env(
+    os.environ,
+    tools=[],
     summary_options=SummaryOptions(timeline=True, stall_threshold=3, warn_at=(0.8,)),
-)
+) as agent:
+    result = agent.run_result("Reply with exactly ready.")
+
+print("timeline entries:", len(result.summary.timeline or ()))
+print("first stop reason:", result.summary.timeline[0].stop_reason)
 ```
 
-These features are off by default. Configure them together with `SummaryOptions`.
+Output:
+
+```text
+timeline entries: 1
+first stop reason: end_turn
+```
+
+These options are off by default.
 
 - **`stall_threshold`**: flag a run in which the same tool was called with identical arguments
   that many times (3 is a good start). `max_repeated_tool_calls` is reported either way;
@@ -125,12 +179,12 @@ These features are off by default. Configure them together with `SummaryOptions`
   explaining why. Calls are compared by hash and only counts are kept, so neither the
   arguments nor the hash reach a summary, event or metric.
 - **`warn_at`**: fractions of the iteration limit and the deadline (for example `(0.5, 0.8)`)
-  at which `on_budget_warning(kind, used, limit)` fires, once each, so something can
-  intervene before the failure.
+  at which `on_budget_warning(kind, used, limit)` fires, once each.
 - **`timeline`**: `summary.timeline` becomes a tuple of `TurnRecord`s, one per model call:
   duration, stop reason, tokens, cost, attempts, the tools it led to and which of them
   errored, and whether a truncated turn was discarded. A call that raised appears with its
-  `error_type`, and with `None` tokens: it was never answered, so nothing was measured. The timeline also excludes conversation content.
+  `error_type` and `None` tokens because the call never answered. The timeline also excludes
+  conversation content.
 
 ## How reporting stays separate from execution
 

@@ -79,5 +79,5 @@ the relevant `docs/api/*` and `docs/guides/*` pages, `docs/examples/*`, and `__a
 ## Releasing
 
 Use the `/release` skill (`.claude/skills/release/SKILL.md`; background in
-`docs/guides/releasing.md`). Pushing a `vX.Y.Z` tag publishes to PyPI immediately and a version
+`RELEASING.md`). Pushing a `vX.Y.Z` tag publishes to PyPI immediately and a version
 can never be reused. Never `git push --tags`, force-push a tag or `twine upload`.

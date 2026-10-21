@@ -1,35 +1,50 @@
 # Store transcripts
 
-Serialization is deliberately separate from filesystem policy. `to_jsonl()` returns text,
-and `from_jsonl()` accepts any iterable of lines.
+Use `to_jsonl()` to serialize a transcript and `from_jsonl()` to load it. These functions
+work with text and lines; your application chooses where to store them. Each message
+occupies one JSONL line.
 
 ```python
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from agentloop.transcript import from_jsonl, to_jsonl
+from agentloop.transcript import TextPart, Transcript, from_jsonl, to_jsonl
 
-path = Path("conversation.jsonl")
-path.write_text(to_jsonl(transcript.messages), encoding="utf-8")
+transcript = Transcript()
+transcript.add_user_message("Hello")
+transcript.add_assistant_message((TextPart(text="Hi!"),))
 
-loaded = from_jsonl(path.read_text(encoding="utf-8").splitlines())
+with TemporaryDirectory() as directory:
+    path = Path(directory) / "conversation.jsonl"
+    path.write_text(to_jsonl(transcript.messages), encoding="utf-8")
+    loaded = from_jsonl(path.read_text(encoding="utf-8").splitlines())
+    print("JSONL:")
+    print(path.read_text(encoding="utf-8"), end="")
+
 loaded.check_invariants()
+print("Same transcript:", loaded == transcript)
 ```
 
-The serializer writes one `Message` per line and includes a trailing newline. Blank input
-lines are ignored. Invalid or truncated JSON raises instead of silently discarding data.
+Output:
 
-`from_jsonl()` does not check conversation invariants because a legitimate capture may end
-mid-turn. Call `check_invariants()` before sending a loaded transcript to a provider.
+```text
+JSONL:
+{"role":"user","content":[{"type":"text","text":"Hello","citations":[]}],"origin":null}
+{"role":"assistant","content":[{"type":"text","text":"Hi!","citations":[]}],"origin":null}
+Same transcript: True
+```
+
+`to_jsonl()` includes a trailing newline. `from_jsonl()` skips blank lines but raises on
+invalid or truncated JSON. It does not check conversation invariants, since a transcript
+captured mid-turn may be valid to store but incomplete. Call `check_invariants()` before
+sending a loaded transcript to a provider.
 
 See the [`transcript` API](../api/transcript.md).
 
-## `Message.origin`
+## Provider origin data
 
-An assistant `Message` may carry an `Origin`: the provider's own wire form of that turn
-(`provider`, `api`, `model`, `raw`). Adapters replay it instead of rebuilding the turn from the
-canonical parts, which keeps things the canonical form cannot express, such as Anthropic's
-encrypted search results and signed thinking, or OpenRouter's `reasoning_details`.
-
-It can be large. JSONL keeps it so a resumed conversation replays exactly. Drop it
-(`message.model_copy(update={"origin": None})`) if you accept a replay rebuilt from canonical
-parts, or switch providers: an origin from a different provider or API is ignored on replay.
+An assistant message may contain an `Origin`, which stores the provider, API, model, and
+original response blocks. JSONL preserves this data so the same provider and API can replay
+the turn in their original format, including details that the common message parts cannot
+represent. Origin data can make the file large. When a different provider or API loads the
+transcript, its adapter uses the common message parts instead.

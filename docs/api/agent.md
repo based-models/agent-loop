@@ -15,61 +15,58 @@ a capability that can be offered to the model. `Deps` holds runtime-only state a
 that the capability needs when it executes. `Agent` registers the tools and passes its deps
 bundle to each tool call.
 
-The separation is important: the model sees a tool's name, description, and JSON Schema,
-but it never sees `Deps`. Values chosen by the model belong in the schema; trusted values
-supplied by the application belong in `Deps`.
+The model sees a tool's name, description, and JSON Schema, but it never sees `Deps`.
+Values chosen by the model belong in the schema; application data belongs in `Deps`.
+
+`agentloop` supports Anthropic, OpenAI, OpenRouter, and Modal/vLLM. This example uses OpenAI.
+
+Install OpenAI support and set the provider credentials:
+
+```bash
+python -m pip install 'based-models-agentloop[openai-compat]'
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY='your-key'
+```
+
+The model chooses a note name. The application supplies the notes through `Deps`:
 
 ```python
-import datetime as dt
 import os
-
-import yfinance as yf
 
 from agentloop import Agent, Deps, tool
 
-class MarketDeps(Deps):
-    use_adjusted_prices: bool = True
+class NoteDeps(Deps):
+    notes: dict[str, str]
 
 @tool(
     parameters={
         "type": "object",
-        "properties": {
-            "tickers": {
-                "type": "array",
-                "items": {"type": "string"},
-                "minItems": 1,
-            },
-            "date": {"type": "string", "format": "date"},
-        },
-        "required": ["tickers", "date"],
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
         "additionalProperties": False,
     }
 )
-def closing_prices(tickers: list[str], date: str, *, deps: MarketDeps) -> str:
-    """Return closing prices for one or more stock tickers on a date."""
-    trading_day = dt.date.fromisoformat(date)
-    next_day = trading_day + dt.timedelta(days=1)
-    prices: dict[str, float | None] = {}
+def read_note(name: str, *, deps: NoteDeps) -> str:
+    """Read a note by name."""
+    return deps.notes.get(name, "Note not found.")
 
-    for ticker in tickers:
-        history = yf.Ticker(ticker).history(
-            start=trading_day,
-            end=next_day,
-            auto_adjust=deps.use_adjusted_prices,
-        )
-        prices[ticker] = None if history.empty else float(history["Close"].iloc[0])
-
-    return str(prices)
-
-deps = MarketDeps(use_adjusted_prices=True)
-with Agent.from_env(os.environ, tools=[closing_prices], deps=deps) as agent:
-    answer = agent.run("What did AAPL and MSFT close at on 2025-01-02?")
+deps = NoteDeps(notes={"welcome": "Hello from the agent loop."})
+with Agent.from_env(os.environ, tools=[read_note], deps=deps) as agent:
+    result = agent.run_result(
+        "Read the welcome note with read_note. Reply with its text only."
+    )
+    print(result.text)
+    print(result.summary.tool_calls)
 ```
 
-Here, `tickers` and `date` are model-provided inputs. Whether to adjust prices is an
-application policy, so it is injected through `deps` and omitted from the model-visible
-tool schema. This example requires the separately installed `yfinance` package; it is not
-an `agentloop` dependency.
+Output:
+
+```text
+Hello from the agent loop.
+{'read_note': 1}
+```
+
+`tool_calls` confirms the agent ran the tool.
 
 ## When to use `Deps`
 
@@ -82,15 +79,23 @@ Provide `Deps` when tools need either:
   database handle, or request context; or
 - a `before_tool` hook that approves or denies tool calls before execution.
 
-Subclass `Deps` to declare application-specific fields, then add a keyword-only `deps`
-parameter only to handlers that need the bundle. Do not put ordinary model-selected tool
-arguments in `Deps`; doing so hides them from the tool schema and prevents the model from
-supplying them.
+The `read_note` example shows the two kinds of input:
 
-The bundle is attached to the `Agent`, not created for each call. If its fields contain
-mutable or request-specific state, manage that lifetime deliberately. Also remember that
-multiple tool calls may execute concurrently, so shared dependencies and approval hooks
-must be safe for concurrent use.
+- `name` is in the tool's JSON Schema. The model chooses it when calling `read_note`.
+- `notes` is declared on `NoteDeps` and passed to the agent by the application. The model
+  can ask for a note by name, but cannot supply or replace the notes dictionary.
+
+Define a `Deps` subclass for the application values a tool needs. Add `*, deps: NoteDeps`
+to a handler that reads those values, as `read_note` does. A handler that needs only its
+model-chosen arguments can leave out `deps`. Keep those arguments in the JSON Schema so
+the model knows what it can pass. For example, `read_note` lists `name` under `properties`
+and `required`, so the model knows to supply a note name when it calls the tool.
+
+The agent keeps the same `deps` object for every run and every tool call. For example, two
+calls to `agent.run_result(...)` would use the same `notes` dictionary. If the notes differ
+by request, create an agent with the appropriate `NoteDeps` for each request. If a tool
+changes shared data, account for the fact that multiple tool calls can run concurrently;
+the same applies to a custom `before_tool` approval hook.
 
 ## `Deps`
 
@@ -109,7 +114,7 @@ handlers.
 ## `tool`
 
 ```text
-tool(parameters, *, name=None, description=None)
+tool(parameters, *, name=None, description=None, timeout_seconds=None, parallel_safe=True)
 ```
 
 Decorator that converts a callable into a [`ToolSpec`](tooling.md#toolspec).
@@ -118,26 +123,12 @@ Decorator that converts a callable into a [`ToolSpec`](tooling.md#toolspec).
 - `name`: model-visible name; defaults to the function name.
 - `description`: defaults to the first paragraph of the docstring. If neither exists,
   decoration raises `ValueError`.
+- `timeout_seconds`: optional positive limit for a local tool call.
+- `parallel_safe`: set to `False` to run local tool calls in a turn sequentially.
 - A keyword-only parameter named `deps` receives the configured dependency bundle and is
   hidden from the model-visible handler signature and JSON Schema. The same bundle is
   available to every tool registered with the agent, though a handler can omit the
   parameter when it does not need it.
-
-```python
-from agentloop import tool
-
-@tool(
-    parameters={
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"],
-        "additionalProperties": False,
-    }
-)
-def greet(name: str) -> str:
-    """Greet a person."""
-    return f"Hello, {name}!"
-```
 
 ## `Agent`
 
@@ -164,12 +155,14 @@ kept as internal state.
 
 `client` is borrowed: an agent constructed directly never closes it. `tools` accepts local
 `ToolSpec` objects and provider-run `HostedTool` objects. Values produced by `@tool` can be
-passed directly. Duplicate local tool names, unsupported hosted tools, and a local `ToolSpec` named like a
-hosted tool kind (for example `web_search`) fail during construction; native and client-side
-tools are separate, explicit choices. `deps` is the one runtime dependency bundle passed to local tool handlers,
-defaulting to `Deps()`. `trace=True` combines an `OTelObserver` with the supplied observer.
-`metrics=True` adds a `MetricsObserver`. `summary_options` configures the optional timeline,
-repeated-call detection, and limit warnings described in
+passed directly. Construction fails for duplicate local tool names, hosted tools the client
+does not support, or a local tool whose name matches a hosted tool passed to the same agent
+(for example, both named `web_search`).
+
+`deps` is the one runtime dependency bundle passed to local tool handlers, defaulting to
+`Deps()`. `trace=True` combines an `OTelObserver` with the supplied observer. `metrics=True`
+adds a `MetricsObserver`. `summary_options` configures the optional timeline, repeated-call
+detection, and limit warnings described in
 [Conversation summaries](../guides/summaries.md).
 
 ### `Agent.from_env`
@@ -218,13 +211,13 @@ agent.converse(
 ) -> Transcript
 ```
 
-Advances, mutates, and returns the supplied transcript. The optional identifiers have the
+Updates and returns the supplied transcript. The optional identifiers have the
 same meaning as in `run()`.
 
 ### `Agent.converse_result`
 
 Accepts the same arguments as `converse()` and returns a `ConversationResult` containing the
-transcript and its summary.
+transcript, text, and summary.
 
 ### `Agent.close`
 

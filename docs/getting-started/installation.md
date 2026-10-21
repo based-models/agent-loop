@@ -1,30 +1,62 @@
 # Installation
 
-based-models-agentloop requires Python 3.12 or newer. The import name is `agentloop`.
-Install the extra for the provider you use:
+`based-models-agentloop` requires Python 3.12 or newer. Install the distribution named
+`based-models-agentloop`; import it in Python as `agentloop`.
+
+For the core agent loop and its offline `FakeClient`, no provider extra is needed:
 
 ```bash
-pip install 'based-models-agentloop[anthropic]'
-pip install 'based-models-agentloop[openai-compat]'
-pip install 'based-models-agentloop[otel]'
+python -m pip install based-models-agentloop
 ```
 
-`openai-compat` supports OpenAI, OpenRouter, and Modal. `otel` adds OpenTelemetry tracing,
-metrics, and the OTLP HTTP exporter. Install everything with:
+Choose an extra when you connect to a provider or export telemetry:
+
+| Extra | Adds |
+|---|---|
+| `anthropic` | Anthropic SDK |
+| `openai-compat` | HTTP client for OpenAI, OpenRouter, and Modal/vLLM |
+| `otel` | OpenTelemetry SDK and OTLP HTTP exporter |
+| `all` | All three extras above |
+
+For example, install **one** provider extra with either of these commands:
 
 ```bash
-pip install 'based-models-agentloop[all]'
+python -m pip install 'based-models-agentloop[anthropic]'
+python -m pip install 'based-models-agentloop[openai-compat]'
 ```
 
-For a checkout of this repository:
+Add the `otel` extra if the application exports spans or metrics. Install every integration
+with `all`:
+
+```bash
+python -m pip install 'based-models-agentloop[otel]'
+python -m pip install 'based-models-agentloop[all]'
+```
+
+Check that the package imports in the selected Python environment:
+
+```bash
+python -c 'import agentloop; print("agentloop ready")'
+```
+
+Output:
+
+```text
+agentloop ready
+```
+
+## Work from this repository
+
+With Python 3.12 or newer available as `python`, create a virtual environment and install
+the project with its development dependencies:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e '.[all,dev]'
+python -m pip install -e '.[all,dev]'
 ```
 
-No provider SDK is imported until its client is constructed, so a basic `import agentloop`
-does not require every optional dependency.
+Provider SDKs and the OpenTelemetry SDK are imported only when their integrations are
+used. A basic `import agentloop` works without those optional extras.
 
 Next: [Hello World](hello-world.md).

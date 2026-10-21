@@ -1,13 +1,21 @@
 # `agentloop.providers`
 
-Built-in provider integrations convert vendor APIs to the shared `LLMClient` interface. The
-package initializer exports nothing; import constructors from their modules.
+Built-in provider integrations convert vendor requests and responses to the shared
+`LLMClient` interface. All four support local tools. Hosted web search is available only
+with Anthropic Messages and OpenAI Responses.
 
-- [Anthropic](anthropic.md)
-- [OpenAI](openai.md)
-- [OpenRouter](openrouter.md)
-- [Modal](modal.md)
+| Provider | Direct client | API | Hosted web search |
+|---|---|---|---|
+| [Anthropic](anthropic.md) | `AnthropicClient` | Messages | Yes |
+| [OpenAI](openai.md) | `build_openai_client` | Responses by default; Chat Completions optional | Responses only |
+| [OpenRouter](openrouter.md) | `build_openrouter_client` | Chat Completions | No |
+| [Modal](modal.md) | `build_modal_client` | Chat Completions | No |
 
-The modules `_common` and `_openai_compat` are private implementation details despite being
-importable in Python. Applications should use `Settings`/`build_client`, the concrete public
-constructors, or your own `LLMClient` implementation.
+Use [`Settings` and `build_client`](../config.md) for provider selection and automatic
+retries. Import a direct client from its module when you need provider-specific options.
+The `agentloop.providers` package initializer exports no constructors.
+
+Modules whose names start with an underscore, such as `_common` and `_openai_compat`, are
+internal implementation details. To add another provider, implement the
+[`LLMClient` interface](../provider.md); see the
+[custom providers guide](../../guides/custom-providers.md).
