@@ -11,16 +11,14 @@ The package is installed as `based-models-agentloop` and imported as `agentloop`
 ## Why use agentloop?
 
 - Use the same agent code with Anthropic, OpenAI, OpenRouter, or Modal/vLLM.
-- Run local Python tools or provider-hosted web search.
-- Keep complete, typed, serializable transcripts—including tool activity, sources, and
-  citations.
-- Execute independent tool calls concurrently while preserving their original result order.
-- Get consistent retries, errors, usage data, time limits, and iteration limits across
-  providers.
-- Record outcomes, event logs, distributed traces, and metrics without changing agent
-  behavior.
+- Run local Python tools with approval hooks and trusted dependencies.
+- Constrain provider-hosted web search with domain allowlists or blocklists.
+- Keep typed, serializable transcripts with tool activity, sources, and citations.
+- Run independent tool calls concurrently while preserving result order.
+- Get consistent retries, error types, usage data, and run limits across providers.
+- Record summaries, event logs, traces, and metrics with metadata-only defaults; redact
+  captured content before logging or export.
 - Test agent behavior offline with the included scripted `FakeClient`.
-- Install only the provider dependencies your application needs.
 
 Requires Python 3.12 or newer.
 
@@ -41,15 +39,17 @@ import os
 
 from agentloop import Agent
 
-with Agent.from_env(
-    os.environ,
-    tools=[],
-    system="Answer clearly and concisely.",
-) as agent:
-    print(agent.run("Why is the sky blue?"))
+with Agent.from_env(os.environ, tools=[]) as agent:
+    print(agent.run("Reply with exactly: ready"))
 ```
 
-`Agent.from_env()` receives an environment mapping explicitly—the library never reads the
+Output:
+
+```text
+ready
+```
+
+`Agent.from_env()` receives an environment mapping explicitly. The library never reads the
 process environment or loads a `.env` file on its own. The context manager closes the client
 created by `from_env()` when the block exits.
 
@@ -97,7 +97,7 @@ contract shown to the model and is never inferred from the function signature.
 ```python
 import os
 
-from agentloop import Agent, ToolError, tool
+from agentloop import Agent, tool
 
 ADD_SCHEMA = {
     "type": "object",
@@ -112,16 +112,24 @@ ADD_SCHEMA = {
 @tool(parameters=ADD_SCHEMA)
 def add(left: int, right: int) -> str:
     """Add two integers."""
-    if abs(left) > 1_000_000 or abs(right) > 1_000_000:
-        raise ToolError("numbers must be at most one million")
     return str(left + right)
 
 with Agent.from_env(
     os.environ,
     tools=[add],
-    system="Use the add tool for arithmetic.",
+    system="Use the add tool for arithmetic. Reply with only its numeric result.",
 ) as agent:
-    print(agent.run("What is 27 plus 15?"))
+    result = agent.run_result("What is 27 plus 15?")
+
+print(result.text)
+print(result.summary.tool_calls)
+```
+
+Output:
+
+```text
+42
+{'add': 1}
 ```
 
 `ToolError` returns safe feedback to the model. Unexpected exceptions are logged and
@@ -140,21 +148,33 @@ search is supported by Anthropic and by OpenAI's Responses API:
 ```python
 import os
 
-from agentloop import Agent, HostedTool
+from agentloop import Agent, HostedTool, HostedToolPart
 
-search = HostedTool(
-    kind="web_search",
-    options={
-        "allowed_domains": ["europa.eu"],
-        "search_context_size": "high",
-    },
-)
+search = HostedTool(kind="web_search", options={"allowed_domains": ["python.org"]})
 
 with Agent.from_env(os.environ, tools=[search]) as agent:
-    print(agent.run("What changed in EU AI Act guidance this month?"))
+    result = agent.run_result(
+        "Use web search to find the title of the Python home page. "
+        "Reply with only the title, without explanation or citation."
+    )
+
+print(result.text)
+print(any(
+    isinstance(part, HostedToolPart)
+    for message in result.transcript.messages
+    for part in message.content
+))
 ```
 
-Search activity, consulted sources, and citations are preserved in the transcript. Passing a
+Output:
+
+```text
+Welcome to Python.org
+True
+```
+
+The `True` means the transcript recorded a hosted search call. Search activity, consulted
+sources, and citations are preserved in the transcript. Passing a
 hosted tool to an unsupported provider or API fails when the agent is constructed instead of
 silently dropping the capability.
 
@@ -170,7 +190,11 @@ from agentloop import Agent, Transcript, final_text
 
 transcript = Transcript()
 
-with Agent.from_env(os.environ, tools=[]) as agent:
+with Agent.from_env(
+    os.environ,
+    tools=[],
+    system="When asked for the user's name, reply with only the name.",
+) as agent:
     transcript.add_user_message("My name is Ada.")
     agent.converse(transcript)
 
@@ -178,7 +202,14 @@ with Agent.from_env(os.environ, tools=[]) as agent:
     agent.converse(transcript)
 
 print(final_text(transcript))
-print(transcript.model_dump_json(indent=2))
+print(len(transcript.messages))
+```
+
+Output:
+
+```text
+Ada
+4
 ```
 
 A transcript can contain text, model reasoning, local tool calls and results, hosted-tool
@@ -196,21 +227,22 @@ Rate limits, provider unavailability, timeouts, and invalid responses are retrya
 authentication, bad-request, context-length, missing-model, and credit errors fail
 immediately. Server `Retry-After` values are honored within the configured delay limit.
 
-```python
-import os
+A missing credential fails before a model request is sent:
 
-from agentloop import Agent, AgentLoopError
-from agentloop.errors import AuthError, RateLimited
+```python
+from agentloop import Agent
+from agentloop.errors import AuthError
 
 try:
-    with Agent.from_env(os.environ, tools=[]) as agent:
-        print(agent.run("Hello"))
-except AuthError:
-    print("Check provider credentials")
-except RateLimited as error:
-    print("The provider remained rate limited", error.retry_after)
-except AgentLoopError as error:
-    print(f"Agent failed: {type(error).__name__}: {error}")
+    Agent.from_env({"LLM_PROVIDER": "openai"}, tools=[])
+except AuthError as error:
+    print(type(error).__name__, error)
+```
+
+Output:
+
+```text
+AuthError OPENAI_API_KEY is not set
 ```
 
 The loop also enforces iteration and wall-clock budgets, protects against truncated tool
@@ -228,21 +260,30 @@ Choose the level of detail that fits the task:
 | Build dashboards and alerts | OpenTelemetry metrics |
 | Send conversation events to an existing system | A custom observer |
 
-Every conversation produces a `ConversationSummary` on success and failure. It records the
-status, model calls, elapsed time, tool calls and errors, retries, token use, and provider-
-reported cost. It contains metadata, not prompts, tool arguments, results, or exception
-messages.
+Every started conversation produces a `ConversationSummary` on success and failure. It
+records the status, model calls, elapsed time, tool calls and errors, retries, token use,
+and provider-reported cost when available. It contains metadata, not prompts, tool
+arguments, results, or exception messages.
 
 ```python
+import os
+
+from agentloop import Agent
+
 with Agent.from_env(os.environ, tools=[]) as agent:
-    result = agent.run_result(
-        "Summarize this account's open support cases.",
-        correlation_id="case-review-42",
-    )
+    result = agent.run_result("Reply with exactly: ready")
 
 print(result.text)
-print(result.summary.status)
-print(result.summary.usage)
+print(result.summary.status.value, result.summary.iterations)
+print(result.summary.usage.input_tokens, result.summary.usage.output_tokens)
+```
+
+Output:
+
+```text
+ready
+completed 1
+11 11
 ```
 
 Read the summary from a result, from `.summary` on an `AgentLoopError`, or in an observer's
@@ -251,8 +292,9 @@ warnings as a conversation approaches its limits, and detection of repeated tool
 
 `EventTraceObserver` writes an ordered JSONL event stream to a function supplied by your
 application, such as a file writer, logger, or queue. Its default output contains metadata
-only. Capturing prompts, responses, tool arguments, results, or error text requires an
-explicit setting and a redaction function.
+only. Capturing prompts, responses, tool arguments, results, or error text requires
+`capture_content=True` and a redaction function, unless you explicitly choose
+`allow_unredacted=True`.
 
 Install the `otel` extra to use OpenTelemetry spans and metrics:
 
@@ -285,7 +327,7 @@ and the rest of the package.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LLM_PROVIDER` | `anthropic` | `anthropic`, `openai`, `openrouter`, or `modal` |
+| `LLM_PROVIDER` | `openrouter` | `anthropic`, `openai`, `openrouter`, or `modal` |
 | `LLM_MAX_ATTEMPTS` | `3` | Total attempts, including the first request |
 | `LLM_TIMEOUT_SECONDS` | provider default | Read timeout for one model call (Anthropic: the SDK's overall timeout) |
 | `ANTHROPIC_API_KEY` | unset | Anthropic credential |

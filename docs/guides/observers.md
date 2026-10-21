@@ -14,38 +14,92 @@ Subclass `NullObserver` so callbacks you do not implement safely do nothing.
 | Counters and distributions for dashboards | [OpenTelemetry metrics](tracing.md#metrics) |
 | Application-specific reporting | A custom observer |
 
+## Write a callback
+
+`NullObserver` implements every callback as a no-op. Subclass it and override only the events
+you need. Here, `on_response()` receives a `ModelResponse` after each successful model call.
+With OpenAI configured as in [Hello World](../getting-started/hello-world.md):
+
 ```python
-from agentloop import NullObserver
+import os
+
+from agentloop import Agent, NullObserver
 from agentloop.provider import ModelResponse
+
 
 class UsageObserver(NullObserver):
     def __init__(self) -> None:
+        self.responses = 0
         self.input_tokens = 0
         self.output_tokens = 0
 
     def on_response(self, response: ModelResponse) -> None:
+        self.responses += 1
         self.input_tokens += response.usage.input_tokens
         self.output_tokens += response.usage.output_tokens
+        print("response.usage:", response.usage)
+
+
+prompt = "How many days are in a week? Reply with one digit."
+usage = UsageObserver()
+with Agent.from_env(os.environ, tools=[], observer=usage) as agent:
+    answer = agent.run(prompt)
+
+print("input:", prompt)
+print("output:", answer)
+print("responses:", usage.responses)
+print("input tokens:", usage.input_tokens)
+print("output tokens:", usage.output_tokens)
 ```
 
-Combine several observers:
+Output:
+
+```text
+response.usage: input_tokens=19 output_tokens=11 cache_read_tokens=0 cache_write_tokens=None reasoning_tokens=0 cost_usd=None input_includes_cached=True
+input: How many days are in a week? Reply with one digit.
+output: 7
+responses: 1
+input tokens: 19
+output tokens: 11
+```
+
+## Combine observers
+
+`ConsoleObserver` prints model text and tool activity. `ListObserver` keeps request, response,
+retry, and tool events in memory. `MultiObserver` sends each callback to its children in
+order, so one run can use both:
 
 ```python
-from agentloop import ConsoleObserver, MultiObserver
+import os
 
-usage = UsageObserver()
-observer = MultiObserver(ConsoleObserver(), usage)
+from agentloop import Agent, ConsoleObserver, ListObserver, MultiObserver
+
+recorded = ListObserver()
+observer = MultiObserver(ConsoleObserver(), recorded)
+with Agent.from_env(os.environ, tools=[], observer=observer) as agent:
+    agent.run("Reply with exactly ready.")
+
+print("recorded events:", recorded.kinds())
 ```
 
-`ConsoleObserver` prints text, tool activity, and retries. `ListObserver` records events for
-tests and debugging. If a callback fails, the library logs the failure and continues the
-conversation. An exception raised while starting an observer is returned to the caller
-because agent work has not begun.
+Output:
 
-Five callbacks are optional, so older observers continue to work:
-`on_conversation_start`, `on_conversation_end`, `on_budget_warning`, `on_stall` and
-`on_model_error`. They carry the run's identifiers, its `ConversationSummary`, the optional
-warnings described in [Conversation summaries](summaries.md), and a failed call's error. To keep a JSONL record of everything, see the
+```text
+ready
+recorded events: ['request', 'response']
+```
+
+`ConsoleObserver` also prints retry errors when they occur. `ListObserver` is useful for
+tests and debugging. If a callback raises, the library logs the failure and continues the
+conversation. An exception raised while entering an observer's `conversation()` context
+propagates before agent work begins.
+
+Five callbacks are optional for older observer implementations:
+`on_conversation_start(context)`, `on_conversation_end(summary)`,
+`on_budget_warning(kind, used, limit)`, `on_stall(tool_name, count)`, and
+`on_model_error(error)`. The context carries run identifiers; the summary describes how the
+run ended. Budget and stall events require the options described in
+[Conversation summaries](summaries.md). To keep a JSONL record of every event, see the
 [event trace](event-trace.md).
 
 See the [`observer` API](../api/observer.md).

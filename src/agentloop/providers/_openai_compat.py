@@ -230,7 +230,7 @@ def request_to_wire(
         payload["temperature"] = request.temperature
     if request.stop_sequences:
         payload["stop"] = list(request.stop_sequences)[:MAX_STOP_SEQUENCES]
-    if quirks.supports_parallel_tool_calls_param:
+    if request.tools and quirks.supports_parallel_tool_calls_param:
         payload["parallel_tool_calls"] = (
             request.parallel_tool_calls and quirks.default_parallel_tool_calls
         )

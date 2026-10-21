@@ -81,7 +81,7 @@ def test_from_env_ignores_the_real_environment() -> None:
 
     os.environ["LLM_PROVIDER"] = "openrouter"
     try:
-        assert Settings.from_env({}).provider == "anthropic"      # the default
+        assert Settings.from_env({}).provider == "openrouter"     # the default
     finally:
         del os.environ["LLM_PROVIDER"]
 

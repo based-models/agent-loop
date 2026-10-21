@@ -142,6 +142,14 @@ def test_openai_provider_requests_max_completion_tokens() -> None:
     assert client._quirks.max_tokens_field == "max_completion_tokens"
 
 
+def test_parallel_tool_calls_is_sent_only_with_tools() -> None:
+    assert "parallel_tool_calls" not in wire()
+
+    tool = ToolSchema(name="read", description="Read", parameters=EMPTY_SCHEMA)
+    assert wire(tools=(tool,))["parallel_tool_calls"] is True
+    assert wire(tools=(tool,), parallel_tool_calls=False)["parallel_tool_calls"] is False
+
+
 # --- parsing arguments (Part 4) ---
 
 

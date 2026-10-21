@@ -1,6 +1,7 @@
 # Custom provider
 
-This offline client makes documentation and application tests deterministic:
+A custom provider implements the `LLMClient` interface: `name`, `model`, and
+`complete(request)`. This fixed client returns a reply without contacting a model service:
 
 ```python
 from agentloop import Agent
@@ -20,10 +21,19 @@ class FixedClient:
             provider=self.name,
         )
 
-agent = Agent([], client=FixedClient())
-assert agent.run("ignored") == "Hello from a fixed response."
+client = FixedClient()
+agent = Agent([], client=client)
+print(agent.run("Say hello."))
 ```
 
-No close method is required by `LLMClient`. When a custom client owns resources, provide a
-`close()` method and close it in application code; a directly constructed `Agent` borrows
-the client.
+Output:
+
+```text
+Hello from a fixed response.
+```
+
+The agent passes a `ModelRequest` to `complete()` and uses the returned `ModelResponse` to
+finish the conversation. `LLMClient` does not require a `close()` method. An `Agent` created
+with `client=` borrows that client; if your implementation owns resources, close it in your
+application code. See [implementing a custom provider](../guides/custom-providers.md) for
+request translation and optional capabilities.
