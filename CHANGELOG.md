@@ -5,6 +5,8 @@ while `0.x`, a minor bump may break the public API (`agentloop.__all__`).
 
 ## [Unreleased]
 
+## [0.6.0]
+
 ### Added
 - Transport failures say what failed and whether the request was sent. `ProviderError` gains
   `phase` (`FailurePhase`: connect, tls, proxy, send, read, status, redirect, body),
