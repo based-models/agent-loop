@@ -363,3 +363,9 @@ the agentloop versions each release supports.
 release may change the public API exposed through `agentloop.__all__`.
 
 Licensed under the Apache License 2.0.
+
+## Contributions
+
+This project is open source but does not accept external contributions or pull requests.
+To report a security vulnerability, see the
+[security policy](https://github.com/based-models/agent-loop/security/policy).
