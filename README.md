@@ -354,8 +354,8 @@ Read the [documentation](https://www.basedmodels.com/docs/agent-loop):
 [observers](https://www.basedmodels.com/docs/agent-loop/guides/observers), and the
 [API reference](https://www.basedmodels.com/docs/agent-loop/api). Typed helpers for hosted
 web search live in the companion
-[agentloop-tools](https://www.basedmodels.com/docs/agent-tools) package, whose 0.1.x
-releases work with agentloop 0.4 and 0.5.
+[agentloop-tools](https://www.basedmodels.com/docs/agent-tools) package. Its README lists
+the agentloop versions each release supports.
 
 ## Stability and license
 
